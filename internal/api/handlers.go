@@ -2,16 +2,33 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/jfortner8/archive-api/internal/storage"
 	"github.com/jfortner8/archive-api/internal/store"
 )
 
+// itemsStore is the subset of *store.ItemStore the handlers need. Defining
+// it here (rather than depending on the concrete type) lets tests supply a
+// fake instead of talking to real DynamoDB.
+type itemsStore interface {
+	Create(ctx context.Context, itemType, title string) (store.Item, error)
+	Get(ctx context.Context, id string) (store.Item, error)
+	List(ctx context.Context) ([]store.Item, error)
+	AddFile(ctx context.Context, id string, file store.File) (store.Item, error)
+}
+
+// filesStore is the subset of *storage.FileStore the handlers need.
+type filesStore interface {
+	PresignUpload(ctx context.Context, key, contentType string) (string, error)
+	PresignDownload(ctx context.Context, key string) (string, error)
+}
+
 // Server holds the dependencies HTTP handlers need.
 type Server struct {
-	Items *store.ItemStore
-	Files *storage.FileStore
+	Items itemsStore
+	Files filesStore
 }
 
 // Routes returns the HTTP handler for the whole API.
