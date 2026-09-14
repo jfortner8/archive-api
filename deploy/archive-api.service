@@ -1,0 +1,23 @@
+# systemd unit for running the compiled binary on the Lightsail instance.
+#
+# Install:
+#   sudo cp deploy/archive-api.service /etc/systemd/system/
+#   sudo cp /path/to/uploaded/api-linux /opt/archive-api/api
+#   sudo cp /path/to/uploaded/.env /opt/archive-api/.env
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now archive-api
+
+[Unit]
+Description=archive-api
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/archive-api
+EnvironmentFile=/opt/archive-api/.env
+ExecStart=/opt/archive-api/api
+Restart=on-failure
+User=archive-api
+
+[Install]
+WantedBy=multi-user.target
