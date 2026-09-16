@@ -18,3 +18,33 @@ jobs:
       - run: go vet ./...
       - run: go test ./... -v
       - run: go build ./...
+
+  # Deploys to the real Lambda function on every push to main (i.e. every
+  # merged PR), using credentials for archive-api-ci-deploy - an IAM user
+  # scoped to only updating this one function's code, nothing else.
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build Lambda package
+        run: GOOS=linux GOARCH=arm64 go build -o bootstrap ./cmd/lambda && zip lambda.zip bootstrap
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Deploy to Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name archive-api \
+            --zip-file fileb://lambda.zip
+          aws lambda wait function-updated --function-name archive-api
