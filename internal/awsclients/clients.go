@@ -17,9 +17,9 @@ import (
 
 // Clients bundles the AWS service clients used across the API.
 type Clients struct {
-	S3       *s3.Client
+	S3        *s3.Client
 	S3Presign *s3.PresignClient
-	Dynamo   *dynamodb.Client
+	Dynamo    *dynamodb.Client
 }
 
 // New builds AWS clients from the given config.

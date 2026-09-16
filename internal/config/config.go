@@ -15,10 +15,16 @@ type Config struct {
 	S3Bucket    string
 	DynamoTable string
 
+	// APIKey must be sent as the X-API-Key header on every request except
+	// /healthz. There's no other access control on this API, so this is
+	// what stops a stranger who finds the URL from reading or writing
+	// your data.
+	APIKey string
+
 	// S3Endpoint and DynamoEndpoint override the default AWS endpoints.
 	// Leave unset in production; point them at MinIO/DynamoDB Local for
 	// local development (see docker-compose.yml).
-	S3Endpoint    string
+	S3Endpoint     string
 	DynamoEndpoint string
 }
 
@@ -32,6 +38,7 @@ func Load() (Config, error) {
 		DynamoTable:    os.Getenv("DYNAMODB_TABLE"),
 		S3Endpoint:     os.Getenv("S3_ENDPOINT"),
 		DynamoEndpoint: os.Getenv("DYNAMODB_ENDPOINT"),
+		APIKey:         os.Getenv("API_KEY"),
 	}
 
 	if cfg.S3Bucket == "" {
@@ -39,6 +46,9 @@ func Load() (Config, error) {
 	}
 	if cfg.DynamoTable == "" {
 		return Config{}, fmt.Errorf("DYNAMODB_TABLE is required")
+	}
+	if cfg.APIKey == "" {
+		return Config{}, fmt.Errorf("API_KEY is required")
 	}
 
 	return cfg, nil

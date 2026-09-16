@@ -1,10 +1,14 @@
-// Command api runs the archive-api HTTP server.
+// Command lambda runs archive-api as an AWS Lambda function behind a
+// Function URL, instead of a listening server (see cmd/api). Same
+// handlers, same business logic - only how a request reaches them differs.
 package main
 
 import (
 	"context"
 	"log"
-	"net/http"
+
+	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/jfortner8/archive-api/internal/api"
 	"github.com/jfortner8/archive-api/internal/awsclients"
@@ -32,9 +36,8 @@ func main() {
 		APIKey: cfg.APIKey,
 	}
 
-	addr := ":" + cfg.Port
-	log.Printf("listening on %s", addr)
-	if err := http.ListenAndServe(addr, server.Routes()); err != nil {
-		log.Fatalf("server: %v", err)
-	}
+	// Lambda Function URLs send events in the API Gateway HTTP API v2
+	// payload format, hence NewV2.
+	adapter := httpadapter.NewV2(server.Routes())
+	lambda.Start(adapter.ProxyWithContext)
 }
