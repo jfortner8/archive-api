@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 
 	"github.com/jfortner8/archive-api/internal/storage"
@@ -29,6 +30,10 @@ type filesStore interface {
 type Server struct {
 	Items itemsStore
 	Files filesStore
+
+	// APIKey must match the X-API-Key header on every route except
+	// /healthz. There's no other access control on this API.
+	APIKey string
 }
 
 // Routes returns the HTTP handler for the whole API.
@@ -37,15 +42,29 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /healthz", s.healthCheck)
 
-	mux.HandleFunc("POST /items", s.createItem)
-	mux.HandleFunc("GET /items", s.listItems)
-	mux.HandleFunc("GET /items/{id}", s.getItem)
+	mux.HandleFunc("POST /items", s.requireAPIKey(s.createItem))
+	mux.HandleFunc("GET /items", s.requireAPIKey(s.listItems))
+	mux.HandleFunc("GET /items/{id}", s.requireAPIKey(s.getItem))
 
-	mux.HandleFunc("POST /items/{id}/upload-url", s.presignUpload)
-	mux.HandleFunc("POST /items/{id}/files", s.attachFile)
-	mux.HandleFunc("GET /items/{id}/files/{role}/download-url", s.presignDownload)
+	mux.HandleFunc("POST /items/{id}/upload-url", s.requireAPIKey(s.presignUpload))
+	mux.HandleFunc("POST /items/{id}/files", s.requireAPIKey(s.attachFile))
+	mux.HandleFunc("GET /items/{id}/files/{role}/download-url", s.requireAPIKey(s.presignDownload))
 
 	return mux
+}
+
+// requireAPIKey rejects any request whose X-API-Key header doesn't match
+// s.APIKey. Uses a constant-time comparison so response timing can't be
+// used to guess the key one byte at a time.
+func (s *Server) requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		provided := r.Header.Get("X-API-Key")
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(s.APIKey)) != 1 {
+			writeError(w, http.StatusUnauthorized, "invalid or missing API key")
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (s *Server) healthCheck(w http.ResponseWriter, r *http.Request) {

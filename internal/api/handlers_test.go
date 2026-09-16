@@ -11,6 +11,8 @@ import (
 	"github.com/jfortner8/archive-api/internal/store"
 )
 
+const testAPIKey = "test-api-key"
+
 func newTestServer(items *fakeItemsStore, files *fakeFilesStore) http.Handler {
 	if items == nil {
 		items = newFakeItemsStore()
@@ -18,7 +20,7 @@ func newTestServer(items *fakeItemsStore, files *fakeFilesStore) http.Handler {
 	if files == nil {
 		files = &fakeFilesStore{}
 	}
-	return (&Server{Items: items, Files: files}).Routes()
+	return (&Server{Items: items, Files: files, APIKey: testAPIKey}).Routes()
 }
 
 func doRequest(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -27,6 +29,7 @@ func doRequest(t *testing.T, h http.Handler, method, path, body string) *httptes
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	req.Header.Set("X-API-Key", testAPIKey)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -52,6 +55,38 @@ func TestHealthCheck(t *testing.T) {
 	if body["status"] != "ok" {
 		t.Errorf("status field = %q, want %q", body["status"], "ok")
 	}
+}
+
+func TestRequireAPIKey(t *testing.T) {
+	h := newTestServer(nil, nil)
+
+	t.Run("healthz needs no key", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+		}
+	})
+
+	t.Run("missing key is rejected", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/items", nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("wrong key is rejected", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/items", nil)
+		req.Header.Set("X-API-Key", "not-the-right-key")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
 }
 
 func TestCreateItem(t *testing.T) {

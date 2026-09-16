@@ -3,8 +3,17 @@
 build:
 	go build -o bin/api ./cmd/api
 
-build-linux:
-	GOOS=linux GOARCH=amd64 go build -o bin/api-linux ./cmd/api
+# Cross-compiles the Lambda entrypoint for Lambda's arm64 (Graviton)
+# runtime and zips it as `bootstrap`, the name the provided.al2023 custom
+# runtime expects. Uses PowerShell's Compress-Archive since `zip` isn't a
+# standard tool on Windows.
+build-lambda:
+	GOOS=linux GOARCH=arm64 go build -o bootstrap ./cmd/lambda
+	powershell -NoProfile -Command "Compress-Archive -Path bootstrap -DestinationPath lambda.zip -Force"
+	rm -f bootstrap
+
+deploy-lambda: build-lambda
+	aws lambda update-function-code --function-name archive-api --zip-file fileb://lambda.zip
 
 run:
 	go run ./cmd/api

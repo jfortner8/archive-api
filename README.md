@@ -8,6 +8,7 @@ pass through this service's own request handling.
 
 - [Go](https://go.dev/dl/) 1.22+
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (for local dev dependencies only)
+- [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html), configured (`aws configure`) with credentials for real AWS deployment steps
 
 ## Local development
 
@@ -34,6 +35,10 @@ MinIO's web console is at http://localhost:9001 (login: `minioadmin` /
 
 ## API shape
 
+Every route below except `/healthz` requires an `X-API-Key` header
+matching the `API_KEY` config value, and (in production) a valid
+AWS SigV4 signature - see [Auth](#auth) below.
+
 - `POST /items` — create an item (`{"type": "photo", "title": "..."}`)
 - `GET /items` — list items
 - `GET /items/{id}` — get one item
@@ -45,46 +50,82 @@ MinIO's web console is at http://localhost:9001 (login: `minioadmin` /
 - `GET /items/{id}/files/{role}/download-url` — get a presigned URL to
   download a specific file (e.g. `role=front`, `role=back`)
 
+## Auth
+
+Two independent layers protect this API, since it's otherwise reachable
+by anyone who finds the URL:
+
+1. **AWS IAM** on the Lambda Function URL itself (`auth-type AWS_IAM`) —
+   every request must carry a valid AWS SigV4 signature, or AWS rejects
+   it before it ever reaches the Go code. A browser can't produce this
+   signature itself (it would need real AWS credentials, which must
+   never reach client-side JS), so the frontend needs a small server-side
+   proxy (a Next.js API route/Server Action) that holds a narrowly-scoped
+   IAM credential and signs each request - e.g. via the `aws4fetch` npm
+   package - before forwarding it here.
+2. **`X-API-Key` header**, checked in the Go code itself
+   (`internal/api/handlers.go`), independent of the IAM layer above.
+
+Both must be satisfied. `/healthz` requires neither, so it can be used
+for uptime checks.
+
 ## Setting up real AWS (once you're ready to deploy)
 
 1. **S3 bucket** — create one (e.g. `archive-prod`) in the console or CLI.
    No public access needed; the API generates presigned URLs.
 2. **DynamoDB table** — partition key `id` (String), on-demand ("pay per
    request") billing mode. Matches what `make dev-setup` creates locally.
-3. **IAM role** — create a role with a policy scoped to just that bucket
-   and table (not full S3/DynamoDB access):
+3. **Lambda execution role** — a role Lambda assumes to run the function,
+   with a policy scoped to just that bucket and table (not full
+   S3/DynamoDB access):
    - `s3:PutObject`, `s3:GetObject` on `arn:aws:s3:::archive-prod/*`
    - `dynamodb:GetItem`, `PutItem`, `Scan` on the table's ARN
-4. Attach that role to the Lightsail instance (Lightsail supports
-   attaching IAM roles to instances) so the app never needs a hardcoded
-   access key in production — the SDK picks up the role automatically,
-   which is why `.env.example`'s `AWS_ACCESS_KEY_ID`/`SECRET` are marked
-   local-only.
+   - the AWS-managed `AWSLambdaBasicExecutionRole` policy, for CloudWatch Logs
 
-## Deploying to Lightsail
+   The app never needs a hardcoded AWS access key in production - the SDK
+   picks up this role's credentials automatically, which is why
+   `.env.example`'s `AWS_ACCESS_KEY_ID`/`SECRET` are marked local-only.
 
-1. Create the cheapest Lightsail instance (Linux, e.g. Amazon Linux or
-   Ubuntu), attach the IAM role from above.
-2. Build a Linux binary locally: `make build-linux` → produces `bin/api-linux`.
-3. Copy it and a production `.env` (real bucket/table names, no
-   `S3_ENDPOINT`/`DYNAMODB_ENDPOINT`/AWS keys) to the instance, e.g.:
+## Deploying to Lambda
+
+1. Build and package the Lambda binary: `make build-lambda` → produces
+   `lambda.zip` (cross-compiled for Lambda's arm64 runtime).
+2. Create the function (first time only):
    ```bash
-   scp bin/api-linux ubuntu@<instance-ip>:/tmp/api
-   scp .env.prod ubuntu@<instance-ip>:/tmp/.env
+   aws lambda create-function \
+     --function-name archive-api \
+     --runtime provided.al2023 \
+     --architectures arm64 \
+     --handler bootstrap \
+     --role <execution-role-arn> \
+     --zip-file fileb://lambda.zip \
+     --timeout 15 --memory-size 128 \
+     --environment "Variables={S3_BUCKET=...,DYNAMODB_TABLE=...,API_KEY=...}"
    ```
-4. On the instance, move them into place and install the systemd unit:
+3. Give it a public HTTPS address, locked to signed requests only:
    ```bash
-   sudo mkdir -p /opt/archive-api
-   sudo mv /tmp/api /opt/archive-api/api
-   sudo mv /tmp/.env /opt/archive-api/.env
-   sudo chmod +x /opt/archive-api/api
-   sudo cp deploy/archive-api.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now archive-api
+   aws lambda create-function-url-config \
+     --function-name archive-api \
+     --auth-type AWS_IAM \
+     --cors '{"AllowOrigins":["*"],"AllowMethods":["*"],"AllowHeaders":["*"]}'
    ```
-5. Open port 8080 (or whatever `PORT` you set) in the Lightsail
-   networking tab, or put it behind Lightsail's built-in load
-   balancer/HTTPS if you want a real domain and TLS later.
+   Unlike most Lambda triggers, a Function URL also needs an explicit
+   resource-based permission before *any* signed caller (not just
+   anonymous ones) can invoke it - AWS added this requirement after
+   Function URLs first launched, so older docs/tutorials often miss it:
+   ```bash
+   aws lambda add-permission \
+     --function-name archive-api \
+     --statement-id AllowSignedInvoke \
+     --action lambda:InvokeFunctionUrl \
+     --principal <caller's-IAM-arn-or-account-id> \
+     --function-url-auth-type AWS_IAM
+   ```
+4. Redeploying after a code change: `make deploy-lambda` (rebuilds and
+   runs `aws lambda update-function-code`).
 
-Redeploying after a code change is just repeating steps 2-3 plus
-`sudo systemctl restart archive-api`.
+Testing an `AWS_IAM`-protected Function URL with `curl` alone doesn't
+work, since `curl` can't produce an AWS SigV4 signature - use something
+that can sign requests with your AWS credentials, e.g.
+[`awscurl`](https://github.com/okigan/awscurl) (`awscurl --service lambda
+--region <region> <url>`).
