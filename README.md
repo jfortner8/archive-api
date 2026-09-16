@@ -121,20 +121,34 @@ for uptime checks.
      --auth-type AWS_IAM \
      --cors '{"AllowOrigins":["*"],"AllowMethods":["*"],"AllowHeaders":["*"]}'
    ```
-   Unlike most Lambda triggers, a Function URL also needs an explicit
-   resource-based permission before *any* signed caller (not just
-   anonymous ones) can invoke it - AWS added this requirement after
-   Function URLs first launched, so older docs/tutorials often miss it:
+4. For each same-account IAM identity that needs to call it (e.g. the
+   `archive-ui-proxy` user archives-ui signs requests with), attach an
+   identity-based policy granting **both** `lambda:InvokeFunctionUrl`
+   *and* `lambda:InvokeFunction` on the function's ARN - Function URLs
+   started requiring both fairly recently, so older docs/tutorials that
+   only mention `InvokeFunctionUrl` will leave you with a confusing
+   "Forbidden" even though everything looks correctly configured:
    ```bash
-   aws lambda add-permission \
-     --function-name archive-api \
-     --statement-id AllowSignedInvoke \
-     --action lambda:InvokeFunctionUrl \
-     --principal <caller's-IAM-arn-or-account-id> \
-     --function-url-auth-type AWS_IAM
+   aws iam put-user-policy --user-name <caller> --policy-name invoke-archive-api \
+     --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["lambda:InvokeFunctionUrl","lambda:InvokeFunction"],"Resource":"<function-arn>"}]}'
    ```
-4. Redeploying after a code change: `make deploy-lambda` (rebuilds and
-   runs `aws lambda update-function-code`).
+   No resource-based permission (`aws lambda add-permission`) is needed
+   for same-account callers - that's only for anonymous/public access
+   or cross-account callers, neither of which applies here.
+
+## Deploying
+
+Every push to `main` (i.e. every merged PR) auto-deploys to the real
+Lambda function via `.github/workflows/ci.yml`'s `deploy` job, using
+credentials for `archive-api-ci-deploy` - an IAM user scoped to only
+`lambda:UpdateFunctionCode`/`GetFunction` on this one function, stored
+as the `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` GitHub Actions
+secrets (repo Settings → Secrets and variables → Actions). Nothing
+manual required for normal changes.
+
+To deploy without going through GitHub (e.g. testing a change before
+opening a PR): `make deploy-lambda`, using whatever AWS credentials
+`aws configure` has set up locally.
 
 Testing an `AWS_IAM`-protected Function URL with `curl` alone doesn't
 work, since `curl` can't produce an AWS SigV4 signature - use something
