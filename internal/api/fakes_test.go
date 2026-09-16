@@ -66,7 +66,21 @@ func (f *fakeItemsStore) AddFile(_ context.Context, id string, file store.File) 
 	if !ok {
 		return store.Item{}, store.ErrNotFound
 	}
+	file.ID = fmt.Sprintf("file-%d", len(item.Files)+1)
 	item.Files = append(item.Files, file)
+	f.items[id] = item
+	return item, nil
+}
+
+func (f *fakeItemsStore) Update(_ context.Context, id string, apply func(*store.Item)) (store.Item, error) {
+	if f.err != nil {
+		return store.Item{}, f.err
+	}
+	item, ok := f.items[id]
+	if !ok {
+		return store.Item{}, store.ErrNotFound
+	}
+	apply(&item)
 	f.items[id] = item
 	return item, nil
 }

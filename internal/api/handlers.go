@@ -18,6 +18,7 @@ type itemsStore interface {
 	Get(ctx context.Context, id string) (store.Item, error)
 	List(ctx context.Context) ([]store.Item, error)
 	AddFile(ctx context.Context, id string, file store.File) (store.Item, error)
+	Update(ctx context.Context, id string, apply func(*store.Item)) (store.Item, error)
 }
 
 // filesStore is the subset of *storage.FileStore the handlers need.
@@ -45,10 +46,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /items", s.requireAPIKey(s.createItem))
 	mux.HandleFunc("GET /items", s.requireAPIKey(s.listItems))
 	mux.HandleFunc("GET /items/{id}", s.requireAPIKey(s.getItem))
+	mux.HandleFunc("PATCH /items/{id}", s.requireAPIKey(s.updateItem))
 
 	mux.HandleFunc("POST /items/{id}/upload-url", s.requireAPIKey(s.presignUpload))
 	mux.HandleFunc("POST /items/{id}/files", s.requireAPIKey(s.attachFile))
-	mux.HandleFunc("GET /items/{id}/files/{role}/download-url", s.requireAPIKey(s.presignDownload))
+	mux.HandleFunc("GET /items/{id}/files/{fileID}/download-url", s.requireAPIKey(s.presignDownload))
 
 	return mux
 }
@@ -119,6 +121,57 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, item)
 }
 
+type updateItemRequest struct {
+	Title    *string                `json:"title,omitempty"`
+	Date     *store.ArchiveDate     `json:"date,omitempty"`
+	Location *store.ArchiveLocation `json:"location,omitempty"`
+	Notes    *string                `json:"notes,omitempty"`
+	Tags     *[]string              `json:"tags,omitempty"`
+	People   *[]string              `json:"people,omitempty"`
+}
+
+// updateItem applies a partial update: only fields present in the request
+// body are changed, everything else is left as-is.
+func (s *Server) updateItem(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req updateItemRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	item, err := s.Items.Update(r.Context(), id, func(item *store.Item) {
+		if req.Title != nil {
+			item.Title = *req.Title
+		}
+		if req.Date != nil {
+			item.Date = req.Date
+		}
+		if req.Location != nil {
+			item.Location = req.Location
+		}
+		if req.Notes != nil {
+			item.Notes = *req.Notes
+		}
+		if req.Tags != nil {
+			item.Tags = *req.Tags
+		}
+		if req.People != nil {
+			item.People = *req.People
+		}
+	})
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "item not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to update item")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
 type presignUploadRequest struct {
 	Role        string `json:"role"`
 	Filename    string `json:"filename"`
@@ -165,6 +218,7 @@ func (s *Server) presignUpload(w http.ResponseWriter, r *http.Request) {
 
 type attachFileRequest struct {
 	Role        string `json:"role"`
+	Order       int    `json:"order,omitempty"` // page/sequence order within its role, if it matters (e.g. document pages)
 	Key         string `json:"key"`
 	ContentType string `json:"contentType"`
 	SizeBytes   int64  `json:"sizeBytes"`
@@ -187,6 +241,7 @@ func (s *Server) attachFile(w http.ResponseWriter, r *http.Request) {
 
 	item, err := s.Items.AddFile(r.Context(), id, store.File{
 		Role:        req.Role,
+		Order:       req.Order,
 		Key:         req.Key,
 		ContentType: req.ContentType,
 		SizeBytes:   req.SizeBytes,
@@ -204,7 +259,7 @@ func (s *Server) attachFile(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) presignDownload(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	role := r.PathValue("role")
+	fileID := r.PathValue("fileID")
 
 	item, err := s.Items.Get(r.Context(), id)
 	if err != nil {
@@ -217,7 +272,7 @@ func (s *Server) presignDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, f := range item.Files {
-		if f.Role == role {
+		if f.ID == fileID {
 			url, err := s.Files.PresignDownload(r.Context(), f.Key)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to create download URL")
@@ -227,5 +282,5 @@ func (s *Server) presignDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeError(w, http.StatusNotFound, "file not found for that role")
+	writeError(w, http.StatusNotFound, "file not found")
 }

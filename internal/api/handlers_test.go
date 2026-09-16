@@ -241,6 +241,9 @@ func TestAttachFile(t *testing.T) {
 		if len(item.Files) != 1 || item.Files[0].Role != "front" {
 			t.Errorf("unexpected files: %+v", item.Files)
 		}
+		if item.Files[0].ID == "" {
+			t.Error("expected the attached file to get a generated id")
+		}
 	})
 
 	t.Run("item not found", func(t *testing.T) {
@@ -253,15 +256,77 @@ func TestAttachFile(t *testing.T) {
 	})
 }
 
+func TestUpdateItem(t *testing.T) {
+	t.Run("partial update only touches provided fields", func(t *testing.T) {
+		seed := store.Item{ID: "item-1", Type: "photo", Title: "Original title", Notes: "original notes"}
+		h := newTestServer(newFakeItemsStore(seed), nil)
+
+		rec := doRequest(t, h, http.MethodPatch, "/items/item-1",
+			`{"title":"New title","tags":["family","1952"]}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var item store.Item
+		decodeJSON(t, rec, &item)
+		if item.Title != "New title" {
+			t.Errorf("Title = %q, want %q", item.Title, "New title")
+		}
+		if item.Notes != "original notes" {
+			t.Errorf("Notes = %q, want it left unchanged (%q)", item.Notes, "original notes")
+		}
+		if len(item.Tags) != 2 || item.Tags[0] != "family" {
+			t.Errorf("Tags = %v, want [family 1952]", item.Tags)
+		}
+	})
+
+	t.Run("sets date and location", func(t *testing.T) {
+		seed := store.Item{ID: "item-1", Type: "photo", Title: "Test"}
+		h := newTestServer(newFakeItemsStore(seed), nil)
+
+		rec := doRequest(t, h, http.MethodPatch, "/items/item-1",
+			`{"date":{"kind":"circa","date":"1985-01-01","unit":"decade"},"location":{"label":"Asheville, NC","lat":35.6,"lon":-82.5}}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var item store.Item
+		decodeJSON(t, rec, &item)
+		if item.Date == nil || item.Date.Kind != "circa" {
+			t.Errorf("Date = %+v, want kind=circa", item.Date)
+		}
+		if item.Location == nil || item.Location.Label != "Asheville, NC" {
+			t.Errorf("Location = %+v, want label=Asheville, NC", item.Location)
+		}
+	})
+
+	t.Run("item not found", func(t *testing.T) {
+		h := newTestServer(nil, nil)
+		rec := doRequest(t, h, http.MethodPatch, "/items/missing", `{"title":"x"}`)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		seed := store.Item{ID: "item-1"}
+		h := newTestServer(newFakeItemsStore(seed), nil)
+		rec := doRequest(t, h, http.MethodPatch, "/items/item-1", `{not valid`)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+	})
+}
+
 func TestPresignDownload(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		seed := store.Item{
 			ID:    "item-1",
-			Files: []store.File{{Role: "front", Key: "items/item-1/front-x.jpg"}},
+			Files: []store.File{{ID: "file-1", Role: "front", Key: "items/item-1/front-x.jpg"}},
 		}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
-		rec := doRequest(t, h, http.MethodGet, "/items/item-1/files/front/download-url", "")
+		rec := doRequest(t, h, http.MethodGet, "/items/item-1/files/file-1/download-url", "")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
 		}
@@ -273,11 +338,35 @@ func TestPresignDownload(t *testing.T) {
 		}
 	})
 
-	t.Run("role not found", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", Files: []store.File{{Role: "front", Key: "x"}}}
+	t.Run("distinguishes files sharing a role", func(t *testing.T) {
+		// e.g. two voice memos, or multi-page documents - role alone
+		// isn't a unique key, only the file's own ID is.
+		seed := store.Item{
+			ID: "item-1",
+			Files: []store.File{
+				{ID: "file-1", Role: "page", Order: 1, Key: "items/item-1/page-1.jpg"},
+				{ID: "file-2", Role: "page", Order: 2, Key: "items/item-1/page-2.jpg"},
+			},
+		}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
-		rec := doRequest(t, h, http.MethodGet, "/items/item-1/files/back/download-url", "")
+		rec := doRequest(t, h, http.MethodGet, "/items/item-1/files/file-2/download-url", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		var resp map[string]string
+		decodeJSON(t, rec, &resp)
+		if !strings.Contains(resp["downloadUrl"], "page-2.jpg") {
+			t.Errorf("expected the download URL for file-2's key, got: %+v", resp)
+		}
+	})
+
+	t.Run("file not found", func(t *testing.T) {
+		seed := store.Item{ID: "item-1", Files: []store.File{{ID: "file-1", Role: "front", Key: "x"}}}
+		h := newTestServer(newFakeItemsStore(seed), nil)
+
+		rec := doRequest(t, h, http.MethodGet, "/items/item-1/files/no-such-file/download-url", "")
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 		}
@@ -285,7 +374,7 @@ func TestPresignDownload(t *testing.T) {
 
 	t.Run("item not found", func(t *testing.T) {
 		h := newTestServer(nil, nil)
-		rec := doRequest(t, h, http.MethodGet, "/items/missing/files/front/download-url", "")
+		rec := doRequest(t, h, http.MethodGet, "/items/missing/files/file-1/download-url", "")
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 		}

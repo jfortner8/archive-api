@@ -39,16 +39,28 @@ Every route below except `/healthz` requires an `X-API-Key` header
 matching the `API_KEY` config value, and (in production) a valid
 AWS SigV4 signature - see [Auth](#auth) below.
 
-- `POST /items` — create an item (`{"type": "photo", "title": "..."}`)
+- `POST /items` — create an item (`{"type": "photo", "title": "..."}`).
+  `date`/`location`/`notes`/`tags`/`people` aren't set here - a capture
+  flow often knows the file before it knows the details, so those are
+  added afterward via `PATCH`.
 - `GET /items` — list items
 - `GET /items/{id}` — get one item
+- `PATCH /items/{id}` — partial update: only the fields present in the
+  body are changed. Any of `title`, `date`, `location`, `notes`, `tags`,
+  `people` -  e.g. `{"tags": ["family", "1952"]}` leaves everything else
+  as-is. `date` is `{"kind": "exact"|"range"|"circa", ...}` (see
+  `store.ArchiveDate`); `location` is `{"label": "...", "lat": ..., "lon": ..., "confidence": "..."}`.
 - `POST /items/{id}/upload-url` — get a presigned S3 URL to upload a file
-  (`{"role": "front", "filename": "scan.jpg", "contentType": "image/jpeg"}`);
-  the frontend `PUT`s the file bytes directly to the returned URL
+  (`{"role": "front", "filename": "scan.jpg", "contentType": "image/jpeg"}`,
+  `order` optional for multi-page documents); the frontend `PUT`s the
+  file bytes directly to the returned URL
 - `POST /items/{id}/files` — record that an upload finished, attaching it
-  to the item (`{"role": "front", "key": "...", "contentType": "...", "sizeBytes": 123}`)
-- `GET /items/{id}/files/{role}/download-url` — get a presigned URL to
-  download a specific file (e.g. `role=front`, `role=back`)
+  to the item (`{"role": "front", "key": "...", "contentType": "...", "sizeBytes": 123}`).
+  The response includes the attached file's generated `id`.
+- `GET /items/{id}/files/{fileID}/download-url` — get a presigned URL to
+  download a specific file, addressed by its own `id` (not `role` - an
+  item can have several files sharing a role, e.g. multiple voice memos
+  or document pages)
 
 ## Auth
 

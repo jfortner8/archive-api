@@ -24,7 +24,7 @@ type Config struct {
 	// S3Endpoint and DynamoEndpoint override the default AWS endpoints.
 	// Leave unset in production; point them at MinIO/DynamoDB Local for
 	// local development (see docker-compose.yml).
-	S3Endpoint    string
+	S3Endpoint     string
 	DynamoEndpoint string
 }
 
