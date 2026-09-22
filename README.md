@@ -36,21 +36,24 @@ MinIO's web console is at http://localhost:9001 (login: `minioadmin` /
 ### Local dev and Cognito
 
 `make dev-up`/`make dev-setup` only cover S3 and DynamoDB - Cognito has
-no local emulator equivalent to MinIO/DynamoDB Local, so local dev needs
-a real User Pool (recommend a separate **dev** one; see "Setting up real
-AWS" below for how to create one). Point `.env`'s `COGNITO_USER_POOL_ID`/
-`COGNITO_REGION` at it, then get a test token to `curl` with:
+no local emulator equivalent to MinIO/DynamoDB Local. Local dev points at
+the same real User Pool production uses (see "Setting up real AWS" below
+for how it was created) - this app is small enough that one pool for
+everything is simpler than keeping a second one in sync, so just use a
+throwaway test account in it rather than your own. Point `.env`'s
+`COGNITO_USER_POOL_ID`/`COGNITO_REGION` at it, then get a test token to
+`curl` with:
 
 ```bash
 # One-time: create a confirmed test user
-aws cognito-idp admin-create-user --user-pool-id <dev-pool-id> \
+aws cognito-idp admin-create-user --user-pool-id <pool-id> \
   --username test@example.com --temporary-password 'Temp1234!' \
   --message-action SUPPRESS
-aws cognito-idp admin-set-user-password --user-pool-id <dev-pool-id> \
+aws cognito-idp admin-set-user-password --user-pool-id <pool-id> \
   --username test@example.com --password 'Temp1234!' --permanent
 
 # Get an access token
-aws cognito-idp admin-initiate-auth --user-pool-id <dev-pool-id> \
+aws cognito-idp admin-initiate-auth --user-pool-id <pool-id> \
   --client-id <app-client-id> --auth-flow ADMIN_USER_PASSWORD_AUTH \
   --auth-parameters USERNAME=test@example.com,PASSWORD='Temp1234!'
 # -> copy AuthenticationResult.AccessToken

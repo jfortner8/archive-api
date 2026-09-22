@@ -30,8 +30,8 @@ type Config struct {
 	// CognitoUserPoolID and CognitoRegion locate the JWKS used to verify
 	// the Authorization: Bearer token on every request except
 	// /healthz - see internal/authtoken. Unlike S3/DynamoDB, Cognito has
-	// no local emulator, so even local dev needs a real (recommend: a
-	// separate "dev") User Pool.
+	// no local emulator, so local dev points at the same real User Pool
+	// production uses.
 	CognitoUserPoolID string
 	CognitoRegion     string
 
