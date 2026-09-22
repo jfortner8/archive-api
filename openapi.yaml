@@ -1,0 +1,506 @@
+openapi: 3.0.3
+info:
+  title: archive-api
+  description: >
+    Go backend for archive-ui. Stores item metadata in DynamoDB and files
+    (photos, PDFs, etc.) in S3, accessed via presigned URLs so files never
+    pass through this service's own request handling.
+
+
+    Every route except `/healthz` requires **both** security schemes below
+    at once: an `X-API-Key` header (proves the caller is this app's own
+    trusted proxy) and a Cognito access token (proves which account is
+    calling). A third layer, AWS IAM SigV4 on the Lambda Function URL
+    itself, is enforced by AWS before either of the above is even checked
+    and has no OpenAPI representation.
+
+
+    Every item is scoped to the account that created it. `GET /items` only
+    ever returns the caller's own items, and any endpoint given another
+    account's item `id` responds `404` exactly as if it didn't exist.
+  version: "1.0.0"
+
+servers:
+  - url: https://{functionUrl}
+    description: Production (AWS Lambda Function URL)
+    variables:
+      functionUrl:
+        default: b74lj4orus5md3pnga2k76lpt40msbwi.lambda-url.us-east-1.on.aws
+  - url: http://localhost:8080
+    description: Local development (make run)
+
+security:
+  - apiKeyAuth: []
+    bearerAuth: []
+
+tags:
+  - name: health
+    description: Uptime checks - requires no auth of any kind.
+  - name: items
+    description: Item metadata, scoped to the caller's account.
+  - name: files
+    description: Presigned S3 upload/download URLs for files attached to an item.
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: healthCheck
+      summary: Uptime check
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /items:
+    post:
+      tags: [items]
+      operationId: createItem
+      summary: Create an item
+      description: >
+        `date`/`location`/`notes`/`tags`/`people` aren't set here - a
+        capture flow often knows the file before it knows the details, so
+        those are added afterward via PATCH.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, title]
+              properties:
+                type:
+                  type: string
+                  description: Open-ended, e.g. "photo", "document"
+                  example: photo
+                title:
+                  type: string
+                  example: Family photo 1952
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    get:
+      tags: [items]
+      operationId: listItems
+      summary: List the caller's items
+      description: Returns only items belonging to the authenticated account.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Item"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /items/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ItemId"
+    get:
+      tags: [items]
+      operationId: getItem
+      summary: Get one item
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Not found (missing, or belongs to another account)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    patch:
+      tags: [items]
+      operationId: updateItem
+      summary: Partially update an item
+      description: >
+        Only the fields present in the body are changed - everything else
+        is left as-is.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                date:
+                  $ref: "#/components/schemas/ArchiveDate"
+                location:
+                  $ref: "#/components/schemas/ArchiveLocation"
+                notes:
+                  type: string
+                tags:
+                  type: array
+                  items:
+                    type: string
+                people:
+                  type: array
+                  items:
+                    type: string
+              example:
+                tags: [family, "1952"]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Not found (missing, or belongs to another account)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /items/{id}/upload-url:
+    parameters:
+      - $ref: "#/components/parameters/ItemId"
+    post:
+      tags: [files]
+      operationId: presignUpload
+      summary: Get a presigned S3 upload URL
+      description: >
+        The frontend PUTs the file bytes directly to the returned
+        `uploadUrl`; the API never handles the bytes itself. Call
+        `POST /items/{id}/files` afterward to record that the upload
+        finished.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, filename, contentType]
+              properties:
+                role:
+                  type: string
+                  description: e.g. "front", "back", "page", "voice-memo"
+                  example: front
+                filename:
+                  type: string
+                  example: scan.jpg
+                contentType:
+                  type: string
+                  example: image/jpeg
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uploadUrl:
+                    type: string
+                    format: uri
+                  key:
+                    type: string
+                    description: The S3 object key the file will end up at
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Item not found (missing, or belongs to another account)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /items/{id}/files:
+    parameters:
+      - $ref: "#/components/parameters/ItemId"
+    post:
+      tags: [files]
+      operationId: attachFile
+      summary: Attach a completed upload to an item
+      description: >
+        Call this after the client's PUT to the presigned upload URL
+        succeeds. The response includes the attached file's generated
+        `id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, key]
+              properties:
+                role:
+                  type: string
+                  example: front
+                order:
+                  type: integer
+                  description: Page/sequence order within its role, if it matters
+                key:
+                  type: string
+                  description: The S3 object key returned by upload-url
+                contentType:
+                  type: string
+                sizeBytes:
+                  type: integer
+                  format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Item not found (missing, or belongs to another account)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /items/{id}/files/{fileID}/download-url:
+    parameters:
+      - $ref: "#/components/parameters/ItemId"
+      - name: fileID
+        in: path
+        required: true
+        description: >
+          The file's own id, not its role - an item can have several files
+          sharing a role (e.g. multiple voice memos, or document pages).
+        schema:
+          type: string
+    get:
+      tags: [files]
+      operationId: presignDownload
+      summary: Get a presigned S3 download URL for one file
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  downloadUrl:
+                    type: string
+                    format: uri
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Item or file not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  securitySchemes:
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: >
+        Static shared secret proving the caller is this app's own trusted
+        proxy (archives-ui), independent of which end user is signed in.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        A Cognito access token, verified against the User Pool's JWKS.
+        Identifies which account is calling; every item is scoped to it.
+
+  parameters:
+    ItemId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request body or missing required fields
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing/invalid API key or bearer token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      example:
+        error: item not found
+
+    ArchiveDate:
+      type: object
+      description: >
+        When something happened, which isn't always a single known day -
+        `kind` selects which of the other fields apply.
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [exact, range, circa]
+        date:
+          type: string
+          description: The day, for kind=exact; the center point, for kind=circa
+          example: "1985-01-01"
+        start:
+          type: string
+          description: For kind=range
+        end:
+          type: string
+          description: For kind=range
+        unit:
+          type: string
+          description: For kind=circa - how wide the uncertainty is
+          example: decade
+
+    ArchiveLocation:
+      type: object
+      description: >
+        Where something happened. lat/lon/confidence are optional - a
+        location can be just a text label with no coordinates.
+      required: [label]
+      properties:
+        label:
+          type: string
+          example: Asheville, NC
+        lat:
+          type: number
+          format: double
+        lon:
+          type: number
+          format: double
+        confidence:
+          type: string
+
+    File:
+      type: object
+      description: >
+        One stored blob (a photo, a PDF page, a voice memo, ...) attached
+        to an item. `id` is what individual files are addressed by - role
+        alone isn't unique, since an item can have several files sharing a
+        role.
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          example: front
+        order:
+          type: integer
+        key:
+          type: string
+          description: S3 object key
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+
+    Item:
+      type: object
+      description: One archived record - metadata plus zero or more attached files.
+      properties:
+        id:
+          type: string
+        accountId:
+          type: string
+          description: >
+            Whose catalog this belongs to - a Cognito user's sub. Every
+            endpoint scopes to this automatically; it's never set by the
+            caller.
+        type:
+          type: string
+          example: photo
+        title:
+          type: string
+        date:
+          $ref: "#/components/schemas/ArchiveDate"
+        location:
+          $ref: "#/components/schemas/ArchiveLocation"
+        notes:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        people:
+          type: array
+          items:
+            type: string
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/File"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
