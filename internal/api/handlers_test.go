@@ -8,28 +8,61 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jfortner8/archive-api/internal/authtoken"
 	"github.com/jfortner8/archive-api/internal/store"
 )
 
-const testAPIKey = "test-api-key"
+const (
+	testAPIKey = "test-api-key"
+
+	testSub          = "test-sub"
+	testAccessToken  = "test-access-token"
+	otherSub         = "other-sub"
+	otherAccessToken = "other-access-token"
+)
+
+// defaultVerifier maps the two test tokens above to their accounts, so
+// most tests can just call newTestServer and doRequest without thinking
+// about auth at all.
+func defaultVerifier() *fakeVerifier {
+	return newFakeVerifier(map[string]authtoken.Claims{
+		testAccessToken:  {Sub: testSub, Username: "alice"},
+		otherAccessToken: {Sub: otherSub, Username: "bob"},
+	})
+}
 
 func newTestServer(items *fakeItemsStore, files *fakeFilesStore) http.Handler {
+	return newTestServerWithVerifier(items, files, nil)
+}
+
+func newTestServerWithVerifier(items *fakeItemsStore, files *fakeFilesStore, verifier *fakeVerifier) http.Handler {
 	if items == nil {
 		items = newFakeItemsStore()
 	}
 	if files == nil {
 		files = &fakeFilesStore{}
 	}
-	return (&Server{Items: items, Files: files, APIKey: testAPIKey}).Routes()
+	if verifier == nil {
+		verifier = defaultVerifier()
+	}
+	return (&Server{Items: items, Files: files, Verifier: verifier, APIKey: testAPIKey}).Routes()
 }
 
 func doRequest(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return doRequestAs(t, h, method, path, body, testAccessToken)
+}
+
+func doRequestAs(t *testing.T, h http.Handler, method, path, body, token string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("X-API-Key", testAPIKey)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -71,6 +104,7 @@ func TestRequireAPIKey(t *testing.T) {
 
 	t.Run("missing key is rejected", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/items", nil)
+		req.Header.Set("Authorization", "Bearer "+testAccessToken)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {
@@ -81,8 +115,50 @@ func TestRequireAPIKey(t *testing.T) {
 	t.Run("wrong key is rejected", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/items", nil)
 		req.Header.Set("X-API-Key", "not-the-right-key")
+		req.Header.Set("Authorization", "Bearer "+testAccessToken)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
+}
+
+func TestRequireAuth(t *testing.T) {
+	h := newTestServer(nil, nil)
+
+	t.Run("healthz needs no token", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+		}
+	})
+
+	t.Run("missing token is rejected", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/items", nil)
+		req.Header.Set("X-API-Key", testAPIKey)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("malformed authorization header is rejected", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/items", nil)
+		req.Header.Set("X-API-Key", testAPIKey)
+		req.Header.Set("Authorization", testAccessToken) // missing "Bearer " prefix
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("unrecognized token is rejected", func(t *testing.T) {
+		rec := doRequestAs(t, h, http.MethodGet, "/items", "", "not-a-real-token")
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 		}
@@ -105,6 +181,9 @@ func TestCreateItem(t *testing.T) {
 		}
 		if item.Type != "photo" || item.Title != "Family photo 1952" {
 			t.Errorf("unexpected item: %+v", item)
+		}
+		if item.AccountID != testSub {
+			t.Errorf("AccountID = %q, want the caller's sub %q", item.AccountID, testSub)
 		}
 		// Field names on the wire must be lowercase camelCase, not the Go
 		// struct field names - this is what regressed once already when
@@ -144,7 +223,7 @@ func TestCreateItem(t *testing.T) {
 
 func TestGetItem(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", Type: "photo", Title: "Test"}
+		seed := store.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Test"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
 		rec := doRequest(t, h, http.MethodGet, "/items/item-1", "")
@@ -169,8 +248,8 @@ func TestGetItem(t *testing.T) {
 }
 
 func TestListItems(t *testing.T) {
-	seed1 := store.Item{ID: "item-1", Type: "photo", Title: "A"}
-	seed2 := store.Item{ID: "item-2", Type: "document", Title: "B"}
+	seed1 := store.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "A"}
+	seed2 := store.Item{ID: "item-2", AccountID: testSub, Type: "document", Title: "B"}
 	h := newTestServer(newFakeItemsStore(seed1, seed2), nil)
 
 	rec := doRequest(t, h, http.MethodGet, "/items", "")
@@ -187,7 +266,7 @@ func TestListItems(t *testing.T) {
 
 func TestPresignUpload(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", Type: "photo", Title: "Test"}
+		seed := store.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Test"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
 		rec := doRequest(t, h, http.MethodPost, "/items/item-1/upload-url",
@@ -204,6 +283,9 @@ func TestPresignUpload(t *testing.T) {
 		if !strings.Contains(resp.Key, "item-1") || !strings.Contains(resp.Key, "front") {
 			t.Errorf("key %q should reference item id and role", resp.Key)
 		}
+		if !strings.Contains(resp.Key, testSub) {
+			t.Errorf("key %q should reference the caller's account", resp.Key)
+		}
 	})
 
 	t.Run("item not found", func(t *testing.T) {
@@ -216,18 +298,28 @@ func TestPresignUpload(t *testing.T) {
 	})
 
 	t.Run("missing fields", func(t *testing.T) {
-		seed := store.Item{ID: "item-1"}
+		seed := store.Item{ID: "item-1", AccountID: testSub}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 		rec := doRequest(t, h, http.MethodPost, "/items/item-1/upload-url", `{"role":"front"}`)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 		}
 	})
+
+	t.Run("another account's item is not found", func(t *testing.T) {
+		seed := store.Item{ID: "item-1", AccountID: otherSub, Type: "photo", Title: "Test"}
+		h := newTestServer(newFakeItemsStore(seed), nil)
+		rec := doRequest(t, h, http.MethodPost, "/items/item-1/upload-url",
+			`{"role":"front","filename":"front.jpg","contentType":"image/jpeg"}`)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+	})
 }
 
 func TestAttachFile(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", Type: "photo", Title: "Test"}
+		seed := store.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Test"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
 		rec := doRequest(t, h, http.MethodPost, "/items/item-1/files",
@@ -254,11 +346,21 @@ func TestAttachFile(t *testing.T) {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 		}
 	})
+
+	t.Run("another account's item is not found", func(t *testing.T) {
+		seed := store.Item{ID: "item-1", AccountID: otherSub, Type: "photo", Title: "Test"}
+		h := newTestServer(newFakeItemsStore(seed), nil)
+		rec := doRequest(t, h, http.MethodPost, "/items/item-1/files",
+			`{"role":"front","key":"x"}`)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+	})
 }
 
 func TestUpdateItem(t *testing.T) {
 	t.Run("partial update only touches provided fields", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", Type: "photo", Title: "Original title", Notes: "original notes"}
+		seed := store.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Original title", Notes: "original notes"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
 		rec := doRequest(t, h, http.MethodPatch, "/items/item-1",
@@ -281,7 +383,7 @@ func TestUpdateItem(t *testing.T) {
 	})
 
 	t.Run("sets date and location", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", Type: "photo", Title: "Test"}
+		seed := store.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Test"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
 		rec := doRequest(t, h, http.MethodPatch, "/items/item-1",
@@ -309,11 +411,20 @@ func TestUpdateItem(t *testing.T) {
 	})
 
 	t.Run("invalid json", func(t *testing.T) {
-		seed := store.Item{ID: "item-1"}
+		seed := store.Item{ID: "item-1", AccountID: testSub}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 		rec := doRequest(t, h, http.MethodPatch, "/items/item-1", `{not valid`)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("another account's item is not found", func(t *testing.T) {
+		seed := store.Item{ID: "item-1", AccountID: otherSub, Type: "photo", Title: "Test"}
+		h := newTestServer(newFakeItemsStore(seed), nil)
+		rec := doRequest(t, h, http.MethodPatch, "/items/item-1", `{"title":"hijacked"}`)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 		}
 	})
 }
@@ -321,8 +432,9 @@ func TestUpdateItem(t *testing.T) {
 func TestPresignDownload(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		seed := store.Item{
-			ID:    "item-1",
-			Files: []store.File{{ID: "file-1", Role: "front", Key: "items/item-1/front-x.jpg"}},
+			ID:        "item-1",
+			AccountID: testSub,
+			Files:     []store.File{{ID: "file-1", Role: "front", Key: "items/item-1/front-x.jpg"}},
 		}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
@@ -342,7 +454,8 @@ func TestPresignDownload(t *testing.T) {
 		// e.g. two voice memos, or multi-page documents - role alone
 		// isn't a unique key, only the file's own ID is.
 		seed := store.Item{
-			ID: "item-1",
+			ID:        "item-1",
+			AccountID: testSub,
 			Files: []store.File{
 				{ID: "file-1", Role: "page", Order: 1, Key: "items/item-1/page-1.jpg"},
 				{ID: "file-2", Role: "page", Order: 2, Key: "items/item-1/page-2.jpg"},
@@ -363,7 +476,7 @@ func TestPresignDownload(t *testing.T) {
 	})
 
 	t.Run("file not found", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", Files: []store.File{{ID: "file-1", Role: "front", Key: "x"}}}
+		seed := store.Item{ID: "item-1", AccountID: testSub, Files: []store.File{{ID: "file-1", Role: "front", Key: "x"}}}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
 		rec := doRequest(t, h, http.MethodGet, "/items/item-1/files/no-such-file/download-url", "")
@@ -377,6 +490,80 @@ func TestPresignDownload(t *testing.T) {
 		rec := doRequest(t, h, http.MethodGet, "/items/missing/files/file-1/download-url", "")
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+	})
+
+	t.Run("another account's item is not found", func(t *testing.T) {
+		seed := store.Item{
+			ID:        "item-1",
+			AccountID: otherSub,
+			Files:     []store.File{{ID: "file-1", Role: "front", Key: "x"}},
+		}
+		h := newTestServer(newFakeItemsStore(seed), nil)
+		rec := doRequest(t, h, http.MethodGet, "/items/item-1/files/file-1/download-url", "")
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+	})
+}
+
+// TestItemOwnership is the end-to-end cross-account check: everything one
+// account creates should be completely invisible to another account,
+// across every route that touches an item.
+func TestItemOwnership(t *testing.T) {
+	items := newFakeItemsStore()
+	h := newTestServer(items, nil)
+
+	createRec := doRequestAs(t, h, http.MethodPost, "/items", `{"type":"photo","title":"mine"}`, testAccessToken)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body=%s", createRec.Code, http.StatusCreated, createRec.Body.String())
+	}
+	var created store.Item
+	decodeJSON(t, createRec, &created)
+
+	t.Run("List excludes another account's items", func(t *testing.T) {
+		rec := doRequestAs(t, h, http.MethodGet, "/items", "", otherAccessToken)
+		var items []store.Item
+		decodeJSON(t, rec, &items)
+		if len(items) != 0 {
+			t.Errorf("expected no items visible to another account, got %+v", items)
+		}
+	})
+
+	t.Run("Get 404s for another account", func(t *testing.T) {
+		rec := doRequestAs(t, h, http.MethodGet, "/items/"+created.ID, "", otherAccessToken)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+	})
+
+	t.Run("Update 404s for another account", func(t *testing.T) {
+		rec := doRequestAs(t, h, http.MethodPatch, "/items/"+created.ID, `{"title":"hijacked"}`, otherAccessToken)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+	})
+
+	t.Run("upload-url 404s for another account", func(t *testing.T) {
+		rec := doRequestAs(t, h, http.MethodPost, "/items/"+created.ID+"/upload-url",
+			`{"role":"front","filename":"x.jpg","contentType":"image/jpeg"}`, otherAccessToken)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+	})
+
+	t.Run("attach file 404s for another account", func(t *testing.T) {
+		rec := doRequestAs(t, h, http.MethodPost, "/items/"+created.ID+"/files",
+			`{"role":"front","key":"x"}`, otherAccessToken)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+	})
+
+	t.Run("owner can still see it", func(t *testing.T) {
+		rec := doRequestAs(t, h, http.MethodGet, "/items/"+created.ID, "", testAccessToken)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 		}
 	})
 }

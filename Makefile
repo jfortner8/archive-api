@@ -35,7 +35,9 @@ dev-down:
 	docker compose down
 
 # Create the local bucket and table against the containers started by
-# dev-up. Safe to run more than once.
+# dev-up. Safe to run more than once. Doesn't cover Cognito - there's no
+# local emulator for it, so local dev points at the same real User Pool
+# production uses; see the README's "Local dev and Cognito" section.
 dev-setup:
 	docker compose --profile tools run --rm awscli s3 mb s3://archive-dev --endpoint-url http://minio:9000 || true
 	docker compose --profile tools run --rm awscli dynamodb create-table \
