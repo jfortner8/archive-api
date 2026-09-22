@@ -1,0 +1,63 @@
+id: cd
+version: 1
+label: CD / Album
+icon: disc
+category: media
+
+# The type that proves the mechanism. A CD is several unrelated kinds of
+# media that happen to belong to one object, and in practice you almost never
+# have all of them: a disc rescued from a car glovebox has no case, a ripped
+# album has no photographs at all. Every slot below is optional, which is the
+# default rather than a concession.
+slots:
+  - id: case-front
+    label: Case front
+    accepts: [image]
+    max: 1
+
+  - id: case-back
+    label: Case back
+    accepts: [image]
+    max: 1
+
+  - id: disc
+    label: Disc face
+    accepts: [image]
+    max: 1
+
+  - id: booklet
+    label: Booklet pages
+    accepts: [image, pdf]
+    max: 60
+    ordered: true
+
+  - id: audio
+    label: Tracks
+    accepts: [audio]
+    max: 100
+    ordered: true
+    maxSizeBytes: 209715200
+
+  - id: voice-memo
+    label: Voice memos
+    accepts: [audio]
+    max: 20
+    ordered: true
+    maxSizeBytes: 104857600
+
+attributes:
+  - { id: artist, label: Artist, type: string }
+  - { id: release-year, label: Year, type: integer, min: 1870, max: 2100 }
+
+# Falls through in the order a human would: the cover art if we have it, the
+# disc if we only photographed that, a booklet page as a last resort.
+cover:
+  prefer: [case-front, disc, booklet]
+
+# Four primitives, all of which the UI already has. This is the point: the CD
+# viewer is an arrangement of existing parts, not new code.
+presentation:
+  - { primitive: flippable, slots: [case-front, case-back] }
+  - { primitive: single-image, slots: [disc] }
+  - { primitive: paged, slots: [booklet] }
+  - { primitive: audio, slots: [audio, voice-memo] }

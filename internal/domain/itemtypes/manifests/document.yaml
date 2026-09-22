@@ -1,0 +1,29 @@
+id: document
+version: 1
+label: Document
+icon: file-text
+category: documents
+
+slots:
+  # Pages accept PDFs as well as images so a scanner that emits one PDF per
+  # document and one that emits a folder of JPEGs both land here, rather than
+  # forcing a second near-identical type.
+  - id: page
+    label: Pages
+    accepts: [image, pdf]
+    max: 200
+    ordered: true
+
+  - id: voice-memo
+    label: Voice memos
+    accepts: [audio]
+    max: 20
+    ordered: true
+    maxSizeBytes: 104857600
+
+cover:
+  prefer: [page]
+
+presentation:
+  - { primitive: paged, slots: [page] }
+  - { primitive: audio, slots: [voice-memo] }
