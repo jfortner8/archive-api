@@ -58,7 +58,7 @@ aws cognito-idp admin-initiate-auth --user-pool-id <pool-id> \
   --auth-parameters USERNAME=test@example.com,PASSWORD='Temp1234!'
 # -> copy AuthenticationResult.AccessToken
 
-curl -H "Authorization: Bearer <access-token>" -H "X-API-Key: dev-key" \
+curl -H "X-User-Token: <access-token>" -H "X-API-Key: dev-key" \
   http://localhost:8080/items
 ```
 
@@ -111,13 +111,21 @@ by anyone who finds the URL:
    package - before forwarding it here.
 2. **`X-API-Key` header**, checked in the Go code itself
    (`internal/api/handlers.go`), independent of the IAM layer above.
-3. **`Authorization: Bearer <token>` header**, a Cognito access token
-   verified against the User Pool's published JWKS
-   (`internal/authtoken`) - no secret is shared with archives-ui, since
-   Cognito signs tokens asymmetrically. This layer answers a different
-   question than the two above: 1 and 2 answer "is this our trusted
-   proxy calling," this one answers "which end user is this," and is
-   what every `accountId` scoping check above is based on.
+3. **`X-User-Token` header**, a Cognito access token verified against the
+   User Pool's published JWKS (`internal/authtoken`) - no secret is
+   shared with archives-ui, since Cognito signs tokens asymmetrically.
+   This layer answers a different question than the two above: 1 and 2
+   answer "is this our trusted proxy calling," this one answers "which
+   end user is this," and is what every `accountId` scoping check above
+   is based on.
+
+   This is deliberately a custom header, not the standard `Authorization`
+   header a bearer token would normally use - archives-ui's proxy also
+   signs every request with AWS SigV4 (layer 1 requires it), and SigV4
+   signing libraries (e.g. `aws4fetch`) own the `Authorization` header
+   outright, overwriting anything already there. Putting the account
+   token in its own header sidesteps that collision instead of fighting
+   it.
 
 All three must be satisfied. `/healthz` requires none of them, so it can
 be used for uptime checks.
