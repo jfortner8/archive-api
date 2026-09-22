@@ -31,7 +31,7 @@ servers:
 
 security:
   - apiKeyAuth: []
-    bearerAuth: []
+    userTokenAuth: []
 
 tags:
   - name: health
@@ -350,13 +350,16 @@ components:
       description: >
         Static shared secret proving the caller is this app's own trusted
         proxy (archives-ui), independent of which end user is signed in.
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+    userTokenAuth:
+      type: apiKey
+      in: header
+      name: X-User-Token
       description: >
         A Cognito access token, verified against the User Pool's JWKS.
         Identifies which account is calling; every item is scoped to it.
+        Deliberately not the standard Authorization/Bearer header - the
+        proxy calling this API also signs every request with AWS SigV4,
+        which claims that header for itself.
 
   parameters:
     ItemId:

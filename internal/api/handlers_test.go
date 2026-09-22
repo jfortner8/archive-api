@@ -61,7 +61,7 @@ func doRequestAs(t *testing.T, h http.Handler, method, path, body, token string)
 	}
 	req.Header.Set("X-API-Key", testAPIKey)
 	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-User-Token", token)
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -104,7 +104,7 @@ func TestRequireAPIKey(t *testing.T) {
 
 	t.Run("missing key is rejected", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/items", nil)
-		req.Header.Set("Authorization", "Bearer "+testAccessToken)
+		req.Header.Set("X-User-Token", testAccessToken)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {
@@ -115,7 +115,7 @@ func TestRequireAPIKey(t *testing.T) {
 	t.Run("wrong key is rejected", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/items", nil)
 		req.Header.Set("X-API-Key", "not-the-right-key")
-		req.Header.Set("Authorization", "Bearer "+testAccessToken)
+		req.Header.Set("X-User-Token", testAccessToken)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {
@@ -146,10 +146,10 @@ func TestRequireAuth(t *testing.T) {
 		}
 	})
 
-	t.Run("malformed authorization header is rejected", func(t *testing.T) {
+	t.Run("empty token is rejected", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/items", nil)
 		req.Header.Set("X-API-Key", testAPIKey)
-		req.Header.Set("Authorization", testAccessToken) // missing "Bearer " prefix
+		req.Header.Set("X-User-Token", "")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {

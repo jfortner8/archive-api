@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
-	"strings"
 
 	"github.com/jfortner8/archive-api/internal/authtoken"
 	"github.com/jfortner8/archive-api/internal/storage"
@@ -88,12 +87,19 @@ func (s *Server) requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // requireAuth rejects any request without a valid Cognito access token in
-// its Authorization header, and makes the token's account (Cognito sub)
+// its X-User-Token header, and makes the token's account (Cognito sub)
 // available to the wrapped handler via the request context.
+//
+// This is deliberately NOT the standard Authorization header: archives-ui's
+// proxy route also signs every request to this API with AWS SigV4 (the
+// Lambda Function URL requires it), and SigV4 signing libraries own the
+// Authorization header outright - aws4fetch, for one, unconditionally
+// overwrites whatever's already there. Giving the account token its own
+// header sidesteps that collision entirely instead of fighting it.
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || token == "" {
+		token := r.Header.Get("X-User-Token")
+		if token == "" {
 			writeError(w, http.StatusUnauthorized, "invalid or missing token")
 			return
 		}
