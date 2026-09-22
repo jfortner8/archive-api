@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/jfortner8/archive-api/internal/api"
+	"github.com/jfortner8/archive-api/internal/authtoken"
 	"github.com/jfortner8/archive-api/internal/awsclients"
 	"github.com/jfortner8/archive-api/internal/config"
 	"github.com/jfortner8/archive-api/internal/storage"
@@ -26,10 +27,16 @@ func main() {
 		log.Fatalf("aws clients: %v", err)
 	}
 
+	verifier, err := authtoken.NewCognitoVerifier(ctx, cfg.CognitoUserPoolID, cfg.CognitoRegion, cfg.CognitoAppClientID)
+	if err != nil {
+		log.Fatalf("cognito verifier: %v", err)
+	}
+
 	server := &api.Server{
-		Items:  store.NewItemStore(clients.Dynamo, cfg.DynamoTable),
-		Files:  storage.NewFileStore(clients.S3Presign, cfg.S3Bucket),
-		APIKey: cfg.APIKey,
+		Items:    store.NewItemStore(clients.Dynamo, cfg.DynamoTable),
+		Files:    storage.NewFileStore(clients.S3Presign, cfg.S3Bucket),
+		Verifier: verifier,
+		APIKey:   cfg.APIKey,
 	}
 
 	addr := ":" + cfg.Port

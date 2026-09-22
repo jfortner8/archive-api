@@ -33,6 +33,32 @@ curl http://localhost:8080/healthz
 MinIO's web console is at http://localhost:9001 (login: `minioadmin` /
 `minioadmin`) if you want to poke around the bucket visually.
 
+### Local dev and Cognito
+
+`make dev-up`/`make dev-setup` only cover S3 and DynamoDB - Cognito has
+no local emulator equivalent to MinIO/DynamoDB Local, so local dev needs
+a real User Pool (recommend a separate **dev** one; see "Setting up real
+AWS" below for how to create one). Point `.env`'s `COGNITO_USER_POOL_ID`/
+`COGNITO_REGION` at it, then get a test token to `curl` with:
+
+```bash
+# One-time: create a confirmed test user
+aws cognito-idp admin-create-user --user-pool-id <dev-pool-id> \
+  --username test@example.com --temporary-password 'Temp1234!' \
+  --message-action SUPPRESS
+aws cognito-idp admin-set-user-password --user-pool-id <dev-pool-id> \
+  --username test@example.com --password 'Temp1234!' --permanent
+
+# Get an access token
+aws cognito-idp admin-initiate-auth --user-pool-id <dev-pool-id> \
+  --client-id <app-client-id> --auth-flow ADMIN_USER_PASSWORD_AUTH \
+  --auth-parameters USERNAME=test@example.com,PASSWORD='Temp1234!'
+# -> copy AuthenticationResult.AccessToken
+
+curl -H "Authorization: Bearer <access-token>" -H "X-API-Key: dev-key" \
+  http://localhost:8080/items
+```
+
 ## API shape
 
 Every route below except `/healthz` requires an `X-API-Key` header
@@ -62,9 +88,14 @@ AWS SigV4 signature - see [Auth](#auth) below.
   item can have several files sharing a role, e.g. multiple voice memos
   or document pages)
 
+Every item is scoped to the account that created it (`accountId` in the
+response body, a Cognito user's `sub`) - `GET /items` only ever returns
+your own items, and any other endpoint given another account's item `id`
+responds `404` exactly as if it didn't exist.
+
 ## Auth
 
-Two independent layers protect this API, since it's otherwise reachable
+Three independent layers protect this API, since it's otherwise reachable
 by anyone who finds the URL:
 
 1. **AWS IAM** on the Lambda Function URL itself (`auth-type AWS_IAM`) —
@@ -77,9 +108,16 @@ by anyone who finds the URL:
    package - before forwarding it here.
 2. **`X-API-Key` header**, checked in the Go code itself
    (`internal/api/handlers.go`), independent of the IAM layer above.
+3. **`Authorization: Bearer <token>` header**, a Cognito access token
+   verified against the User Pool's published JWKS
+   (`internal/authtoken`) - no secret is shared with archives-ui, since
+   Cognito signs tokens asymmetrically. This layer answers a different
+   question than the two above: 1 and 2 answer "is this our trusted
+   proxy calling," this one answers "which end user is this," and is
+   what every `accountId` scoping check above is based on.
 
-Both must be satisfied. `/healthz` requires neither, so it can be used
-for uptime checks.
+All three must be satisfied. `/healthz` requires none of them, so it can
+be used for uptime checks.
 
 ## Setting up real AWS (once you're ready to deploy)
 
@@ -87,7 +125,29 @@ for uptime checks.
    No public access needed; the API generates presigned URLs.
 2. **DynamoDB table** — partition key `id` (String), on-demand ("pay per
    request") billing mode. Matches what `make dev-setup` creates locally.
-3. **Lambda execution role** — a role Lambda assumes to run the function,
+3. **Cognito User Pool + App Client** — the user directory. No IAM policy
+   changes needed for this one: JWKS verification is a public HTTPS
+   fetch, not an AWS API call.
+   ```bash
+   aws cognito-idp create-user-pool \
+     --pool-name archive-users \
+     --auto-verified-attributes email --username-attributes email \
+     --account-recovery-setting RecoveryMechanisms='[{Name=verified_email,Priority=1}]' \
+     --policies 'PasswordPolicy={MinimumLength=8,RequireUppercase=true,RequireLowercase=true,RequireNumbers=true,RequireSymbols=false}'
+   # capture UserPool.Id -> COGNITO_USER_POOL_ID
+
+   aws cognito-idp create-user-pool-client \
+     --user-pool-id <pool-id> --client-name archive-ui \
+     --explicit-auth-flows ALLOW_USER_PASSWORD_AUTH ALLOW_REFRESH_TOKEN_AUTH \
+     --no-generate-secret \
+     --access-token-validity 12 --id-token-validity 12 \
+     --token-validity-units AccessToken=hours,IdToken=hours
+   # capture UserPoolClient.ClientId -> COGNITO_APP_CLIENT_ID (archives-ui side)
+   ```
+   No client secret: every Cognito call in this system originates
+   server-side (archives-ui's own API routes), so a confidential-client
+   secret (meant for OAuth flows this design doesn't use) adds nothing.
+4. **Lambda execution role** — a role Lambda assumes to run the function,
    with a policy scoped to just that bucket and table (not full
    S3/DynamoDB access):
    - `s3:PutObject`, `s3:GetObject` on `arn:aws:s3:::archive-prod/*`
@@ -112,7 +172,7 @@ for uptime checks.
      --role <execution-role-arn> \
      --zip-file fileb://lambda.zip \
      --timeout 15 --memory-size 128 \
-     --environment "Variables={S3_BUCKET=...,DYNAMODB_TABLE=...,API_KEY=...}"
+     --environment "Variables={S3_BUCKET=...,DYNAMODB_TABLE=...,API_KEY=...,COGNITO_USER_POOL_ID=...,COGNITO_REGION=us-east-1}"
    ```
 3. Give it a public HTTPS address, locked to signed requests only:
    ```bash
@@ -145,6 +205,16 @@ credentials for `archive-api-ci-deploy` - an IAM user scoped to only
 as the `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` GitHub Actions
 secrets (repo Settings → Secrets and variables → Actions). Nothing
 manual required for normal changes.
+
+CI's `deploy` job only updates the function's **code**
+(`aws lambda update-function-code`) - it never touches environment
+variables or IAM policy. Adding `COGNITO_USER_POOL_ID`/`COGNITO_REGION`/
+`COGNITO_APP_CLIENT_ID` (or changing `API_KEY`, for that matter) needs a
+one-time manual step:
+```bash
+aws lambda update-function-configuration --function-name archive-api \
+  --environment "Variables={S3_BUCKET=...,DYNAMODB_TABLE=...,API_KEY=...,COGNITO_USER_POOL_ID=...,COGNITO_REGION=us-east-1}"
+```
 
 To deploy without going through GitHub (e.g. testing a change before
 opening a PR): `make deploy-lambda`, using whatever AWS credentials

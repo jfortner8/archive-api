@@ -26,6 +26,18 @@ type Config struct {
 	// local development (see docker-compose.yml).
 	S3Endpoint     string
 	DynamoEndpoint string
+
+	// CognitoUserPoolID and CognitoRegion locate the JWKS used to verify
+	// the Authorization: Bearer token on every request except
+	// /healthz - see internal/authtoken. Unlike S3/DynamoDB, Cognito has
+	// no local emulator, so even local dev needs a real (recommend: a
+	// separate "dev") User Pool.
+	CognitoUserPoolID string
+	CognitoRegion     string
+
+	// CognitoAppClientID, if set, rejects tokens issued to any other App
+	// Client. Leave unset to skip that check.
+	CognitoAppClientID string
 }
 
 // Load reads configuration from the environment, applying defaults where
@@ -39,7 +51,11 @@ func Load() (Config, error) {
 		S3Endpoint:     os.Getenv("S3_ENDPOINT"),
 		DynamoEndpoint: os.Getenv("DYNAMODB_ENDPOINT"),
 		APIKey:         os.Getenv("API_KEY"),
+
+		CognitoUserPoolID:  os.Getenv("COGNITO_USER_POOL_ID"),
+		CognitoAppClientID: os.Getenv("COGNITO_APP_CLIENT_ID"),
 	}
+	cfg.CognitoRegion = getEnv("COGNITO_REGION", cfg.AWSRegion)
 
 	if cfg.S3Bucket == "" {
 		return Config{}, fmt.Errorf("S3_BUCKET is required")
@@ -49,6 +65,9 @@ func Load() (Config, error) {
 	}
 	if cfg.APIKey == "" {
 		return Config{}, fmt.Errorf("API_KEY is required")
+	}
+	if cfg.CognitoUserPoolID == "" {
+		return Config{}, fmt.Errorf("COGNITO_USER_POOL_ID is required")
 	}
 
 	return cfg, nil

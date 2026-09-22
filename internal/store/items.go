@@ -59,7 +59,8 @@ type File struct {
 // the details.
 type Item struct {
 	ID        string           `dynamodbav:"id" json:"id"`
-	Type      string           `dynamodbav:"type" json:"type"` // e.g. "photo", "document" - open-ended for future data types
+	AccountID string           `dynamodbav:"accountId" json:"accountId"` // whose catalog this belongs to - today always a Cognito user's sub, but named for a future org/team account too
+	Type      string           `dynamodbav:"type" json:"type"`           // e.g. "photo", "document" - open-ended for future data types
 	Title     string           `dynamodbav:"title" json:"title"`
 	Date      *ArchiveDate     `dynamodbav:"date,omitempty" json:"date,omitempty"`
 	Location  *ArchiveLocation `dynamodbav:"location,omitempty" json:"location,omitempty"`
@@ -82,10 +83,11 @@ func NewItemStore(client *dynamodb.Client, tableName string) *ItemStore {
 }
 
 // Create writes a new item with a generated ID and returns it.
-func (s *ItemStore) Create(ctx context.Context, itemType, title string) (Item, error) {
+func (s *ItemStore) Create(ctx context.Context, accountID, itemType, title string) (Item, error) {
 	now := time.Now().UTC()
 	item := Item{
 		ID:        uuid.NewString(),
+		AccountID: accountID,
 		Type:      itemType,
 		Title:     title,
 		Files:     []File{},
@@ -99,8 +101,11 @@ func (s *ItemStore) Create(ctx context.Context, itemType, title string) (Item, e
 	return item, nil
 }
 
-// Get fetches a single item by ID.
-func (s *ItemStore) Get(ctx context.Context, id string) (Item, error) {
+// Get fetches a single item by ID, scoped to accountID. An item that
+// exists but belongs to a different account is reported as ErrNotFound,
+// same as one that doesn't exist at all - callers should never be able to
+// tell the two apart.
+func (s *ItemStore) Get(ctx context.Context, id, accountID string) (Item, error) {
 	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: &s.tableName,
 		Key: map[string]types.AttributeValue{
@@ -118,12 +123,16 @@ func (s *ItemStore) Get(ctx context.Context, id string) (Item, error) {
 	if err := attributevalue.UnmarshalMap(out.Item, &item); err != nil {
 		return Item{}, fmt.Errorf("unmarshal item: %w", err)
 	}
+	if item.AccountID != accountID {
+		return Item{}, ErrNotFound
+	}
 	return item, nil
 }
 
-// List returns every item. Fine at hobby scale; switch to a paginated
-// query (e.g. by type, via a GSI) if the table grows large.
-func (s *ItemStore) List(ctx context.Context) ([]Item, error) {
+// List returns every item belonging to accountID. Fine at hobby scale to
+// Scan the whole table and filter in Go; switch to a Query against a
+// GSI on accountID if the table grows large.
+func (s *ItemStore) List(ctx context.Context, accountID string) ([]Item, error) {
 	out, err := s.client.Scan(ctx, &dynamodb.ScanInput{
 		TableName: &s.tableName,
 	})
@@ -131,9 +140,16 @@ func (s *ItemStore) List(ctx context.Context) ([]Item, error) {
 		return nil, fmt.Errorf("scan items: %w", err)
 	}
 
-	items := make([]Item, 0, len(out.Items))
-	if err := attributevalue.UnmarshalListOfMaps(out.Items, &items); err != nil {
+	all := make([]Item, 0, len(out.Items))
+	if err := attributevalue.UnmarshalListOfMaps(out.Items, &all); err != nil {
 		return nil, fmt.Errorf("unmarshal items: %w", err)
+	}
+
+	items := make([]Item, 0, len(all))
+	for _, item := range all {
+		if item.AccountID == accountID {
+			items = append(items, item)
+		}
 	}
 	return items, nil
 }
@@ -144,8 +160,8 @@ func (s *ItemStore) List(ctx context.Context) ([]Item, error) {
 // uploads to the same item could race and overwrite each other's file
 // list. Fine for a single-user hobby project; switch to an UpdateItem
 // with a list_append expression if that ever stops being true.
-func (s *ItemStore) AddFile(ctx context.Context, id string, file File) (Item, error) {
-	item, err := s.Get(ctx, id)
+func (s *ItemStore) AddFile(ctx context.Context, id, accountID string, file File) (Item, error) {
+	item, err := s.Get(ctx, id, accountID)
 	if err != nil {
 		return Item{}, err
 	}
@@ -166,8 +182,8 @@ func (s *ItemStore) AddFile(ctx context.Context, id string, file File) (Item, er
 //
 // Same read-modify-write caveat as AddFile: not safe under concurrent
 // writes to the same item, which is fine at single-user hobby scale.
-func (s *ItemStore) Update(ctx context.Context, id string, apply func(*Item)) (Item, error) {
-	item, err := s.Get(ctx, id)
+func (s *ItemStore) Update(ctx context.Context, id, accountID string, apply func(*Item)) (Item, error) {
+	item, err := s.Get(ctx, id, accountID)
 	if err != nil {
 		return Item{}, err
 	}

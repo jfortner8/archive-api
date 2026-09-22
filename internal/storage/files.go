@@ -27,9 +27,11 @@ func NewFileStore(presign *s3.PresignClient, bucket string) *FileStore {
 
 // BuildKey generates the S3 object key for a file belonging to an item.
 // Keeping all of an item's files under a shared prefix makes it easy to
-// find/delete them together later.
-func BuildKey(itemID, role, filename string) string {
-	return fmt.Sprintf("items/%s/%s-%s", itemID, role, filename)
+// find/delete them together later; prefixing that by account does the
+// same one level up, so deleting an entire account's data is a single S3
+// prefix delete instead of a per-item walk.
+func BuildKey(accountID, itemID, role, filename string) string {
+	return fmt.Sprintf("accounts/%s/items/%s/%s-%s", accountID, itemID, role, filename)
 }
 
 // PresignUpload returns a URL the client can PUT the file bytes to

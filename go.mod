@@ -3,6 +3,8 @@ module github.com/jfortner8/archive-api
 go 1.26
 
 require (
+	github.com/MicahParks/jwkset v0.11.3
+	github.com/MicahParks/keyfunc/v3 v3.8.2
 	github.com/aws/aws-lambda-go v1.55.0
 	github.com/aws/aws-sdk-go-v2 v1.30.3
 	github.com/aws/aws-sdk-go-v2/config v1.27.27
@@ -10,6 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.34.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.58.2
 	github.com/awslabs/aws-lambda-go-api-proxy v0.16.2
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 )
 
@@ -32,4 +35,5 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.30.3 // indirect
 	github.com/aws/smithy-go v1.20.3 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 )

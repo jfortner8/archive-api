@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"strings"
 
+	"github.com/jfortner8/archive-api/internal/authtoken"
 	"github.com/jfortner8/archive-api/internal/storage"
 	"github.com/jfortner8/archive-api/internal/store"
 )
@@ -14,11 +16,11 @@ import (
 // it here (rather than depending on the concrete type) lets tests supply a
 // fake instead of talking to real DynamoDB.
 type itemsStore interface {
-	Create(ctx context.Context, itemType, title string) (store.Item, error)
-	Get(ctx context.Context, id string) (store.Item, error)
-	List(ctx context.Context) ([]store.Item, error)
-	AddFile(ctx context.Context, id string, file store.File) (store.Item, error)
-	Update(ctx context.Context, id string, apply func(*store.Item)) (store.Item, error)
+	Create(ctx context.Context, accountID, itemType, title string) (store.Item, error)
+	Get(ctx context.Context, id, accountID string) (store.Item, error)
+	List(ctx context.Context, accountID string) ([]store.Item, error)
+	AddFile(ctx context.Context, id, accountID string, file store.File) (store.Item, error)
+	Update(ctx context.Context, id, accountID string, apply func(*store.Item)) (store.Item, error)
 }
 
 // filesStore is the subset of *storage.FileStore the handlers need.
@@ -27,13 +29,22 @@ type filesStore interface {
 	PresignDownload(ctx context.Context, key string) (string, error)
 }
 
+// tokenVerifier is the subset of *authtoken.CognitoVerifier the handlers
+// need. Defined here so tests can supply a fake instead of hitting a real
+// Cognito JWKS endpoint.
+type tokenVerifier interface {
+	Verify(ctx context.Context, token string) (authtoken.Claims, error)
+}
+
 // Server holds the dependencies HTTP handlers need.
 type Server struct {
-	Items itemsStore
-	Files filesStore
+	Items    itemsStore
+	Files    filesStore
+	Verifier tokenVerifier
 
 	// APIKey must match the X-API-Key header on every route except
-	// /healthz. There's no other access control on this API.
+	// /healthz. There's no other access control on this API beyond it
+	// and the Cognito-verified bearer token checked by requireAuth.
 	APIKey string
 }
 
@@ -43,16 +54,23 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /healthz", s.healthCheck)
 
-	mux.HandleFunc("POST /items", s.requireAPIKey(s.createItem))
-	mux.HandleFunc("GET /items", s.requireAPIKey(s.listItems))
-	mux.HandleFunc("GET /items/{id}", s.requireAPIKey(s.getItem))
-	mux.HandleFunc("PATCH /items/{id}", s.requireAPIKey(s.updateItem))
+	mux.HandleFunc("POST /items", s.protected(s.createItem))
+	mux.HandleFunc("GET /items", s.protected(s.listItems))
+	mux.HandleFunc("GET /items/{id}", s.protected(s.getItem))
+	mux.HandleFunc("PATCH /items/{id}", s.protected(s.updateItem))
 
-	mux.HandleFunc("POST /items/{id}/upload-url", s.requireAPIKey(s.presignUpload))
-	mux.HandleFunc("POST /items/{id}/files", s.requireAPIKey(s.attachFile))
-	mux.HandleFunc("GET /items/{id}/files/{fileID}/download-url", s.requireAPIKey(s.presignDownload))
+	mux.HandleFunc("POST /items/{id}/upload-url", s.protected(s.presignUpload))
+	mux.HandleFunc("POST /items/{id}/files", s.protected(s.attachFile))
+	mux.HandleFunc("GET /items/{id}/files/{fileID}/download-url", s.protected(s.presignDownload))
 
 	return mux
+}
+
+// protected wraps next with both auth layers every item/file route needs:
+// requireAPIKey (is this our trusted proxy calling) and requireAuth (which
+// end user is this).
+func (s *Server) protected(next http.HandlerFunc) http.HandlerFunc {
+	return s.requireAPIKey(s.requireAuth(next))
 }
 
 // requireAPIKey rejects any request whose X-API-Key header doesn't match
@@ -69,8 +87,42 @@ func (s *Server) requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// requireAuth rejects any request without a valid Cognito access token in
+// its Authorization header, and makes the token's account (Cognito sub)
+// available to the wrapped handler via the request context.
+func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || token == "" {
+			writeError(w, http.StatusUnauthorized, "invalid or missing token")
+			return
+		}
+
+		claims, err := s.Verifier.Verify(r.Context(), token)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "invalid or missing token")
+			return
+		}
+
+		next(w, r.WithContext(withAccountID(r.Context(), claims.Sub)))
+	}
+}
+
 func (s *Server) healthCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// accountID retrieves the caller's account ID from the request context.
+// Writes a 500 if it's missing, which should be unreachable on any route
+// registered via protected() - this just guards against a future route
+// added without it.
+func (s *Server) accountID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	accountID, ok := accountIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "missing account context")
+		return "", false
+	}
+	return accountID, true
 }
 
 type createItemRequest struct {
@@ -89,7 +141,12 @@ func (s *Server) createItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := s.Items.Create(r.Context(), req.Type, req.Title)
+	accountID, ok := s.accountID(w, r)
+	if !ok {
+		return
+	}
+
+	item, err := s.Items.Create(r.Context(), accountID, req.Type, req.Title)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create item")
 		return
@@ -98,7 +155,12 @@ func (s *Server) createItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
-	items, err := s.Items.List(r.Context())
+	accountID, ok := s.accountID(w, r)
+	if !ok {
+		return
+	}
+
+	items, err := s.Items.List(r.Context(), accountID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list items")
 		return
@@ -109,7 +171,12 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	item, err := s.Items.Get(r.Context(), id)
+	accountID, ok := s.accountID(w, r)
+	if !ok {
+		return
+	}
+
+	item, err := s.Items.Get(r.Context(), id, accountID)
 	if err != nil {
 		if err == store.ErrNotFound {
 			writeError(w, http.StatusNotFound, "item not found")
@@ -141,7 +208,12 @@ func (s *Server) updateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := s.Items.Update(r.Context(), id, func(item *store.Item) {
+	accountID, ok := s.accountID(w, r)
+	if !ok {
+		return
+	}
+
+	item, err := s.Items.Update(r.Context(), id, accountID, func(item *store.Item) {
 		if req.Title != nil {
 			item.Title = *req.Title
 		}
@@ -196,8 +268,14 @@ func (s *Server) presignUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Confirm the item exists before handing out a URL for it.
-	if _, err := s.Items.Get(r.Context(), id); err != nil {
+	accountID, ok := s.accountID(w, r)
+	if !ok {
+		return
+	}
+
+	// Confirm the item exists (and is this caller's) before handing out a
+	// URL for it.
+	if _, err := s.Items.Get(r.Context(), id, accountID); err != nil {
 		if err == store.ErrNotFound {
 			writeError(w, http.StatusNotFound, "item not found")
 			return
@@ -206,7 +284,7 @@ func (s *Server) presignUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key := storage.BuildKey(id, req.Role, req.Filename)
+	key := storage.BuildKey(accountID, id, req.Role, req.Filename)
 	url, err := s.Files.PresignUpload(r.Context(), key, req.ContentType)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create upload URL")
@@ -239,7 +317,12 @@ func (s *Server) attachFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := s.Items.AddFile(r.Context(), id, store.File{
+	accountID, ok := s.accountID(w, r)
+	if !ok {
+		return
+	}
+
+	item, err := s.Items.AddFile(r.Context(), id, accountID, store.File{
 		Role:        req.Role,
 		Order:       req.Order,
 		Key:         req.Key,
@@ -261,7 +344,12 @@ func (s *Server) presignDownload(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	fileID := r.PathValue("fileID")
 
-	item, err := s.Items.Get(r.Context(), id)
+	accountID, ok := s.accountID(w, r)
+	if !ok {
+		return
+	}
+
+	item, err := s.Items.Get(r.Context(), id, accountID)
 	if err != nil {
 		if err == store.ErrNotFound {
 			writeError(w, http.StatusNotFound, "item not found")
