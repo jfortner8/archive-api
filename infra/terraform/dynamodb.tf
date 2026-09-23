@@ -67,18 +67,17 @@ resource "aws_dynamodb_table" "archive" {
     range_key       = "gsi1sk"
     projection_type = "INCLUDE"
 
+    # DynamoDB projects TOP-LEVEL attributes only, so anything nested travels
+    # inside its parent map: "dateNormalized" carries the sort key, bounds,
+    # precision and band tier; "location" carries lat, lon and confidence.
+    # Listing those inner fields individually would silently project nothing.
     non_key_attributes = [
       "typeId",
       "typeVersion",
       "title",
-      "dateSort",
-      "dateEarliest",
-      "dateLatest",
-      "datePrecision",
-      "dateBandTier",
-      "lat",
-      "lon",
-      "confidence",
+      "date",
+      "dateNormalized",
+      "location",
       "h3r6",
       "placeId",
       "tags",
@@ -86,6 +85,7 @@ resource "aws_dynamodb_table" "archive" {
       "capabilities",
       "coverFileId",
       "coverKey",
+      "coverContentType",
       "coverW",
       "coverH",
       "fileCount",

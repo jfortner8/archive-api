@@ -7,19 +7,19 @@ import (
 	"net/http"
 
 	"github.com/jfortner8/archive-api/internal/authtoken"
+	"github.com/jfortner8/archive-api/internal/legacystore"
 	"github.com/jfortner8/archive-api/internal/storage"
-	"github.com/jfortner8/archive-api/internal/store"
 )
 
-// itemsStore is the subset of *store.ItemStore the handlers need. Defining
+// itemsStore is the subset of *legacystore.ItemStore the handlers need. Defining
 // it here (rather than depending on the concrete type) lets tests supply a
 // fake instead of talking to real DynamoDB.
 type itemsStore interface {
-	Create(ctx context.Context, accountID, itemType, title string) (store.Item, error)
-	Get(ctx context.Context, id, accountID string) (store.Item, error)
-	List(ctx context.Context, accountID string) ([]store.Item, error)
-	AddFile(ctx context.Context, id, accountID string, file store.File) (store.Item, error)
-	Update(ctx context.Context, id, accountID string, apply func(*store.Item)) (store.Item, error)
+	Create(ctx context.Context, accountID, itemType, title string) (legacystore.Item, error)
+	Get(ctx context.Context, id, accountID string) (legacystore.Item, error)
+	List(ctx context.Context, accountID string) ([]legacystore.Item, error)
+	AddFile(ctx context.Context, id, accountID string, file legacystore.File) (legacystore.Item, error)
+	Update(ctx context.Context, id, accountID string, apply func(*legacystore.Item)) (legacystore.Item, error)
 }
 
 // filesStore is the subset of *storage.FileStore the handlers need.
@@ -184,7 +184,7 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 
 	item, err := s.Items.Get(r.Context(), id, accountID)
 	if err != nil {
-		if err == store.ErrNotFound {
+		if err == legacystore.ErrNotFound {
 			writeError(w, http.StatusNotFound, "item not found")
 			return
 		}
@@ -195,12 +195,12 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateItemRequest struct {
-	Title    *string                `json:"title,omitempty"`
-	Date     *store.ArchiveDate     `json:"date,omitempty"`
-	Location *store.ArchiveLocation `json:"location,omitempty"`
-	Notes    *string                `json:"notes,omitempty"`
-	Tags     *[]string              `json:"tags,omitempty"`
-	People   *[]string              `json:"people,omitempty"`
+	Title    *string                      `json:"title,omitempty"`
+	Date     *legacystore.ArchiveDate     `json:"date,omitempty"`
+	Location *legacystore.ArchiveLocation `json:"location,omitempty"`
+	Notes    *string                      `json:"notes,omitempty"`
+	Tags     *[]string                    `json:"tags,omitempty"`
+	People   *[]string                    `json:"people,omitempty"`
 }
 
 // updateItem applies a partial update: only fields present in the request
@@ -219,7 +219,7 @@ func (s *Server) updateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := s.Items.Update(r.Context(), id, accountID, func(item *store.Item) {
+	item, err := s.Items.Update(r.Context(), id, accountID, func(item *legacystore.Item) {
 		if req.Title != nil {
 			item.Title = *req.Title
 		}
@@ -240,7 +240,7 @@ func (s *Server) updateItem(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	if err != nil {
-		if err == store.ErrNotFound {
+		if err == legacystore.ErrNotFound {
 			writeError(w, http.StatusNotFound, "item not found")
 			return
 		}
@@ -282,7 +282,7 @@ func (s *Server) presignUpload(w http.ResponseWriter, r *http.Request) {
 	// Confirm the item exists (and is this caller's) before handing out a
 	// URL for it.
 	if _, err := s.Items.Get(r.Context(), id, accountID); err != nil {
-		if err == store.ErrNotFound {
+		if err == legacystore.ErrNotFound {
 			writeError(w, http.StatusNotFound, "item not found")
 			return
 		}
@@ -328,7 +328,7 @@ func (s *Server) attachFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := s.Items.AddFile(r.Context(), id, accountID, store.File{
+	item, err := s.Items.AddFile(r.Context(), id, accountID, legacystore.File{
 		Role:        req.Role,
 		Order:       req.Order,
 		Key:         req.Key,
@@ -336,7 +336,7 @@ func (s *Server) attachFile(w http.ResponseWriter, r *http.Request) {
 		SizeBytes:   req.SizeBytes,
 	})
 	if err != nil {
-		if err == store.ErrNotFound {
+		if err == legacystore.ErrNotFound {
 			writeError(w, http.StatusNotFound, "item not found")
 			return
 		}
@@ -357,7 +357,7 @@ func (s *Server) presignDownload(w http.ResponseWriter, r *http.Request) {
 
 	item, err := s.Items.Get(r.Context(), id, accountID)
 	if err != nil {
-		if err == store.ErrNotFound {
+		if err == legacystore.ErrNotFound {
 			writeError(w, http.StatusNotFound, "item not found")
 			return
 		}

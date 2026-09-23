@@ -10,8 +10,8 @@ import (
 	"github.com/jfortner8/archive-api/internal/authtoken"
 	"github.com/jfortner8/archive-api/internal/awsclients"
 	"github.com/jfortner8/archive-api/internal/config"
+	"github.com/jfortner8/archive-api/internal/legacystore"
 	"github.com/jfortner8/archive-api/internal/storage"
-	"github.com/jfortner8/archive-api/internal/store"
 )
 
 func main() {
@@ -33,7 +33,7 @@ func main() {
 	}
 
 	server := &api.Server{
-		Items:    store.NewItemStore(clients.Dynamo, cfg.DynamoTable),
+		Items:    legacystore.NewItemStore(clients.Dynamo, cfg.DynamoTable),
 		Files:    storage.NewFileStore(clients.S3Presign, cfg.S3Bucket),
 		Verifier: verifier,
 		APIKey:   cfg.APIKey,

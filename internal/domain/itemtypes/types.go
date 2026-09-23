@@ -41,6 +41,13 @@ const (
 // list is stable across writes and diffs cleanly.
 var allFamilies = []MediaFamily{FamilyImage, FamilyAudio, FamilyVideo, FamilyPDF, FamilyModel3D}
 
+// AllFamilies returns every media family in the canonical order. Callers
+// deriving a stable list (an item's capabilities, say) should iterate this
+// rather than whatever order their own data happens to be in.
+func AllFamilies() []MediaFamily {
+	return append([]MediaFamily(nil), allFamilies...)
+}
+
 // Primitive names a way of presenting a group of files. Types compose
 // primitives instead of getting a bespoke viewer, which is what keeps the
 // cost of a new type near zero: a CD is a flip card plus a single image plus
