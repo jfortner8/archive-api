@@ -145,11 +145,18 @@ func (d *ArchiveDate) Validate() error {
 		if d.Start != "" || d.End != "" {
 			return fmt.Errorf("date.start and date.end do not apply when kind is %q", DateCirca)
 		}
-		if _, ok := circaHalfWidth[d.Unit]; !ok {
-			return fmt.Errorf("date.unit %q is not a known circa unit", d.Unit)
-		}
 		if _, err := parsePartial(d.Date); err != nil {
 			return fmt.Errorf("date.date: %w", err)
+		}
+		// Unit is optional: "circa 1960" and "circa May 1975" are how people
+		// actually write these down, and demanding a width turns a natural
+		// note into a form to fill in. When it is given it still has to be a
+		// real one, since an unrecognised width would otherwise be silently
+		// ignored.
+		if d.Unit != "" {
+			if _, ok := circaHalfWidth[d.Unit]; !ok {
+				return fmt.Errorf("date.unit %q is not a known circa unit", d.Unit)
+			}
 		}
 
 	default:
@@ -183,7 +190,7 @@ func (d *ArchiveDate) Normalize() (Normalized, error) {
 		// "circa 1952" centres on mid-1952 rather than on New Year's Day.
 		span, _ := parsePartial(d.Date)
 		centre := midpoint(span.earliest, span.latest)
-		half := circaHalfWidth[d.Unit]
+		half := circaHalfWidth[d.ResolvedUnit()]
 		earliest, latest = centre.Add(-half), centre.Add(half)
 	}
 
@@ -328,4 +335,50 @@ func bandTierFor(span time.Duration) CircaUnit {
 	default:
 		return UnitCentury
 	}
+}
+
+// ResolvedUnit is how wide a circa date's uncertainty is, inferring it from
+// the precision the writer used when they did not say.
+//
+// The inferred width is one step wider than what was written. That is the
+// whole point of the word: "circa 1960" has to mean something looser than
+// "1960", and since an exact bare year already spans the whole of 1960, an
+// inferred width of one year would make circa say nothing at all. So a year
+// becomes five years, a month becomes three, a day becomes a month - each
+// one notch up the same ladder an explicit unit picks from.
+//
+// An explicit unit always wins; this only fills a gap.
+func (d *ArchiveDate) ResolvedUnit() CircaUnit {
+	if d.Unit != "" {
+		return d.Unit
+	}
+
+	span, err := parsePartial(d.Date)
+	if err != nil {
+		return UnitFiveYears
+	}
+
+	switch span.layout {
+	case PrecisionDay:
+		return UnitMonth
+	case PrecisionMonth:
+		return UnitThreeMonths
+	default:
+		return UnitFiveYears
+	}
+}
+
+// Resolve writes any inferred value back onto the date, so the stored record
+// says exactly what it means rather than depending on today's inference rule.
+//
+// This matters more for an archive than it would elsewhere: if the rule were
+// applied only at read time and later changed, every previously stored circa
+// date would quietly come to mean something slightly different. Pinning the
+// width at write time means a record entered in 2026 still says in 2050 what
+// it said when someone wrote it down.
+func (d *ArchiveDate) Resolve() {
+	if d == nil || d.Kind != DateCirca {
+		return
+	}
+	d.Unit = d.ResolvedUnit()
 }
