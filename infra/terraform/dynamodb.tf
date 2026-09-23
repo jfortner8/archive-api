@@ -42,13 +42,25 @@ resource "aws_dynamodb_table" "archive" {
   # GSI1 is "the spine": gsi1pk = ARCH#<aid>#ITEM, gsi1sk = <dateSort>#<itemId>.
   #
   # The INCLUDE projection is the load-bearing decision in this whole design.
-  # Because it carries tags, personIds, placeId, typeId, capabilities, the
-  # date fields and the coordinates, ONE narrow Query answers filtering,
-  # faceting, timeline layout, map pins and sorted pagination without ever
-  # reading the base table. The base table is touched only for item detail.
+  # Because it carries tags, subjects, placeId, typeId, capabilities, the date
+  # fields and the coordinates, ONE narrow Query answers filtering, faceting,
+  # timeline layout, map pins and sorted pagination without ever reading the
+  # base table. The base table is touched only for item detail.
   #
   # Every projected attribute is common metadata, never type-specific - which
   # is why adding an item type never requires an index change.
+  #
+  # "subjects" is a single list of {id, kind, name} rather than parallel
+  # personIds/personNames/animalIds arrays. People and pets are one entity
+  # with a kind, so one attribute serves every kind there will ever be -
+  # adding vehicles or organisations later needs no index change, and neither
+  # does adding a field to each entry (a "photographer" vs "depicted" role,
+  # say).
+  #
+  # Note the projection list is the one thing here that cannot be altered in
+  # place: DynamoDB requires deleting and rebuilding an index to change it.
+  # That is minutes of backfill at this size, not a migration - but it is why
+  # this list got a second look before the first apply.
   global_secondary_index {
     name            = "gsi1"
     hash_key        = "gsi1pk"
@@ -70,8 +82,7 @@ resource "aws_dynamodb_table" "archive" {
       "h3r6",
       "placeId",
       "tags",
-      "personIds",
-      "personNames",
+      "subjects",
       "capabilities",
       "coverFileId",
       "coverKey",
