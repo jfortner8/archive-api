@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/jfortner8/archive-api/internal/authtoken"
-	"github.com/jfortner8/archive-api/internal/store"
+	"github.com/jfortner8/archive-api/internal/legacystore"
 )
 
 const (
@@ -174,7 +174,7 @@ func TestCreateItem(t *testing.T) {
 			t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusCreated, rec.Body.String())
 		}
 
-		var item store.Item
+		var item legacystore.Item
 		decodeJSON(t, rec, &item)
 		if item.ID == "" {
 			t.Error("expected a generated id")
@@ -187,7 +187,7 @@ func TestCreateItem(t *testing.T) {
 		}
 		// Field names on the wire must be lowercase camelCase, not the Go
 		// struct field names - this is what regressed once already when
-		// the store.Item struct only had dynamodbav tags.
+		// the legacystore.Item struct only had dynamodbav tags.
 		if !strings.Contains(rec.Body.String(), `"id":`) {
 			t.Errorf("expected lowercase \"id\" key in response body, got: %s", rec.Body.String())
 		}
@@ -223,7 +223,7 @@ func TestCreateItem(t *testing.T) {
 
 func TestGetItem(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Test"}
+		seed := legacystore.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Test"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
 		rec := doRequest(t, h, http.MethodGet, "/items/item-1", "")
@@ -231,7 +231,7 @@ func TestGetItem(t *testing.T) {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 		}
 
-		var item store.Item
+		var item legacystore.Item
 		decodeJSON(t, rec, &item)
 		if item.ID != "item-1" {
 			t.Errorf("id = %q, want %q", item.ID, "item-1")
@@ -248,8 +248,8 @@ func TestGetItem(t *testing.T) {
 }
 
 func TestListItems(t *testing.T) {
-	seed1 := store.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "A"}
-	seed2 := store.Item{ID: "item-2", AccountID: testSub, Type: "document", Title: "B"}
+	seed1 := legacystore.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "A"}
+	seed2 := legacystore.Item{ID: "item-2", AccountID: testSub, Type: "document", Title: "B"}
 	h := newTestServer(newFakeItemsStore(seed1, seed2), nil)
 
 	rec := doRequest(t, h, http.MethodGet, "/items", "")
@@ -257,7 +257,7 @@ func TestListItems(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 
-	var items []store.Item
+	var items []legacystore.Item
 	decodeJSON(t, rec, &items)
 	if len(items) != 2 {
 		t.Fatalf("got %d items, want 2", len(items))
@@ -266,7 +266,7 @@ func TestListItems(t *testing.T) {
 
 func TestPresignUpload(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Test"}
+		seed := legacystore.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Test"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
 		rec := doRequest(t, h, http.MethodPost, "/items/item-1/upload-url",
@@ -298,7 +298,7 @@ func TestPresignUpload(t *testing.T) {
 	})
 
 	t.Run("missing fields", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", AccountID: testSub}
+		seed := legacystore.Item{ID: "item-1", AccountID: testSub}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 		rec := doRequest(t, h, http.MethodPost, "/items/item-1/upload-url", `{"role":"front"}`)
 		if rec.Code != http.StatusBadRequest {
@@ -307,7 +307,7 @@ func TestPresignUpload(t *testing.T) {
 	})
 
 	t.Run("another account's item is not found", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", AccountID: otherSub, Type: "photo", Title: "Test"}
+		seed := legacystore.Item{ID: "item-1", AccountID: otherSub, Type: "photo", Title: "Test"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 		rec := doRequest(t, h, http.MethodPost, "/items/item-1/upload-url",
 			`{"role":"front","filename":"front.jpg","contentType":"image/jpeg"}`)
@@ -319,7 +319,7 @@ func TestPresignUpload(t *testing.T) {
 
 func TestAttachFile(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Test"}
+		seed := legacystore.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Test"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
 		rec := doRequest(t, h, http.MethodPost, "/items/item-1/files",
@@ -328,7 +328,7 @@ func TestAttachFile(t *testing.T) {
 			t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
 		}
 
-		var item store.Item
+		var item legacystore.Item
 		decodeJSON(t, rec, &item)
 		if len(item.Files) != 1 || item.Files[0].Role != "front" {
 			t.Errorf("unexpected files: %+v", item.Files)
@@ -348,7 +348,7 @@ func TestAttachFile(t *testing.T) {
 	})
 
 	t.Run("another account's item is not found", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", AccountID: otherSub, Type: "photo", Title: "Test"}
+		seed := legacystore.Item{ID: "item-1", AccountID: otherSub, Type: "photo", Title: "Test"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 		rec := doRequest(t, h, http.MethodPost, "/items/item-1/files",
 			`{"role":"front","key":"x"}`)
@@ -360,7 +360,7 @@ func TestAttachFile(t *testing.T) {
 
 func TestUpdateItem(t *testing.T) {
 	t.Run("partial update only touches provided fields", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Original title", Notes: "original notes"}
+		seed := legacystore.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Original title", Notes: "original notes"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
 		rec := doRequest(t, h, http.MethodPatch, "/items/item-1",
@@ -369,7 +369,7 @@ func TestUpdateItem(t *testing.T) {
 			t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
 		}
 
-		var item store.Item
+		var item legacystore.Item
 		decodeJSON(t, rec, &item)
 		if item.Title != "New title" {
 			t.Errorf("Title = %q, want %q", item.Title, "New title")
@@ -383,7 +383,7 @@ func TestUpdateItem(t *testing.T) {
 	})
 
 	t.Run("sets date and location", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Test"}
+		seed := legacystore.Item{ID: "item-1", AccountID: testSub, Type: "photo", Title: "Test"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
 		rec := doRequest(t, h, http.MethodPatch, "/items/item-1",
@@ -392,7 +392,7 @@ func TestUpdateItem(t *testing.T) {
 			t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
 		}
 
-		var item store.Item
+		var item legacystore.Item
 		decodeJSON(t, rec, &item)
 		if item.Date == nil || item.Date.Kind != "circa" {
 			t.Errorf("Date = %+v, want kind=circa", item.Date)
@@ -411,7 +411,7 @@ func TestUpdateItem(t *testing.T) {
 	})
 
 	t.Run("invalid json", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", AccountID: testSub}
+		seed := legacystore.Item{ID: "item-1", AccountID: testSub}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 		rec := doRequest(t, h, http.MethodPatch, "/items/item-1", `{not valid`)
 		if rec.Code != http.StatusBadRequest {
@@ -420,7 +420,7 @@ func TestUpdateItem(t *testing.T) {
 	})
 
 	t.Run("another account's item is not found", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", AccountID: otherSub, Type: "photo", Title: "Test"}
+		seed := legacystore.Item{ID: "item-1", AccountID: otherSub, Type: "photo", Title: "Test"}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 		rec := doRequest(t, h, http.MethodPatch, "/items/item-1", `{"title":"hijacked"}`)
 		if rec.Code != http.StatusNotFound {
@@ -431,10 +431,10 @@ func TestUpdateItem(t *testing.T) {
 
 func TestPresignDownload(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		seed := store.Item{
+		seed := legacystore.Item{
 			ID:        "item-1",
 			AccountID: testSub,
-			Files:     []store.File{{ID: "file-1", Role: "front", Key: "items/item-1/front-x.jpg"}},
+			Files:     []legacystore.File{{ID: "file-1", Role: "front", Key: "items/item-1/front-x.jpg"}},
 		}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
@@ -453,10 +453,10 @@ func TestPresignDownload(t *testing.T) {
 	t.Run("distinguishes files sharing a role", func(t *testing.T) {
 		// e.g. two voice memos, or multi-page documents - role alone
 		// isn't a unique key, only the file's own ID is.
-		seed := store.Item{
+		seed := legacystore.Item{
 			ID:        "item-1",
 			AccountID: testSub,
-			Files: []store.File{
+			Files: []legacystore.File{
 				{ID: "file-1", Role: "page", Order: 1, Key: "items/item-1/page-1.jpg"},
 				{ID: "file-2", Role: "page", Order: 2, Key: "items/item-1/page-2.jpg"},
 			},
@@ -476,7 +476,7 @@ func TestPresignDownload(t *testing.T) {
 	})
 
 	t.Run("file not found", func(t *testing.T) {
-		seed := store.Item{ID: "item-1", AccountID: testSub, Files: []store.File{{ID: "file-1", Role: "front", Key: "x"}}}
+		seed := legacystore.Item{ID: "item-1", AccountID: testSub, Files: []legacystore.File{{ID: "file-1", Role: "front", Key: "x"}}}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 
 		rec := doRequest(t, h, http.MethodGet, "/items/item-1/files/no-such-file/download-url", "")
@@ -494,10 +494,10 @@ func TestPresignDownload(t *testing.T) {
 	})
 
 	t.Run("another account's item is not found", func(t *testing.T) {
-		seed := store.Item{
+		seed := legacystore.Item{
 			ID:        "item-1",
 			AccountID: otherSub,
-			Files:     []store.File{{ID: "file-1", Role: "front", Key: "x"}},
+			Files:     []legacystore.File{{ID: "file-1", Role: "front", Key: "x"}},
 		}
 		h := newTestServer(newFakeItemsStore(seed), nil)
 		rec := doRequest(t, h, http.MethodGet, "/items/item-1/files/file-1/download-url", "")
@@ -518,12 +518,12 @@ func TestItemOwnership(t *testing.T) {
 	if createRec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want %d, body=%s", createRec.Code, http.StatusCreated, createRec.Body.String())
 	}
-	var created store.Item
+	var created legacystore.Item
 	decodeJSON(t, createRec, &created)
 
 	t.Run("List excludes another account's items", func(t *testing.T) {
 		rec := doRequestAs(t, h, http.MethodGet, "/items", "", otherAccessToken)
-		var items []store.Item
+		var items []legacystore.Item
 		decodeJSON(t, rec, &items)
 		if len(items) != 0 {
 			t.Errorf("expected no items visible to another account, got %+v", items)

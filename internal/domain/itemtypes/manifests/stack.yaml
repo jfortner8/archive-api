@@ -1,0 +1,34 @@
+id: stack
+version: 1
+label: Stack of photos
+icon: copy
+category: photos
+
+# An uncatalogued shoebox: photographs digitised together because they arrived
+# together, before anyone has worked out what each one is. The archive's real
+# workflow is bulk-scan first, catalogue later, and this is what "later" looks
+# like in the meantime.
+#
+# Splitting a stack into individually catalogued items is a separate operation
+# (POST /items/{id}/split), not a different type - a stack is a stage, not a
+# category.
+slots:
+  - id: photo
+    label: Photographs
+    accepts: [image]
+    max: 500
+    ordered: true
+
+  - id: voice-memo
+    label: Voice memos
+    accepts: [audio]
+    max: 20
+    ordered: true
+    maxSizeBytes: 104857600
+
+cover:
+  prefer: [photo]
+
+presentation:
+  - { primitive: stack, slots: [photo] }
+  - { primitive: audio, slots: [voice-memo] }

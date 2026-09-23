@@ -1,4 +1,3 @@
-// Package store handles reading and writing item metadata in DynamoDB.
 package store
 
 import (
@@ -7,208 +6,413 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/google/uuid"
+
+	"github.com/jfortner8/archive-api/internal/domain"
+	"github.com/jfortner8/archive-api/internal/store/dynamo"
 )
 
-// ErrNotFound is returned when an item doesn't exist.
-var ErrNotFound = errors.New("item not found")
+// ListOptions controls a page of items.
+type ListOptions struct {
+	Limit  int
+	Cursor string
 
-// ArchiveDate is when something happened, which isn't always a single
-// known day - Kind selects which of the other fields apply:
-//   - "exact": Date is the day
-//   - "range": Start/End bound it
-//   - "circa": Date is the center point, Unit how wide the uncertainty is
-//     (e.g. "decade")
-type ArchiveDate struct {
-	Kind  string `dynamodbav:"kind" json:"kind"`
-	Date  string `dynamodbav:"date,omitempty" json:"date,omitempty"`
-	Start string `dynamodbav:"start,omitempty" json:"start,omitempty"`
-	End   string `dynamodbav:"end,omitempty" json:"end,omitempty"`
-	Unit  string `dynamodbav:"unit,omitempty" json:"unit,omitempty"`
+	// FilterHash fingerprints the filters this page was produced under, and
+	// is checked when the cursor comes back. Callers with no filters pass "".
+	FilterHash string
+
+	// Ascending walks oldest-first. The default is newest-first, matching the
+	// timeline's own default.
+	Ascending bool
 }
 
-// ArchiveLocation is where something happened. Lat/Lon/Confidence are
-// optional - a location can be just a text label with no coordinates.
-type ArchiveLocation struct {
-	Label      string   `dynamodbav:"label" json:"label"`
-	Lat        *float64 `dynamodbav:"lat,omitempty" json:"lat,omitempty"`
-	Lon        *float64 `dynamodbav:"lon,omitempty" json:"lon,omitempty"`
-	Confidence string   `dynamodbav:"confidence,omitempty" json:"confidence,omitempty"`
+// ItemPage is one page of cards plus the cursor for the next.
+type ItemPage struct {
+	Items      []domain.ItemCard
+	NextCursor string
 }
 
-// File describes one stored blob (a photo, a PDF page, a voice memo, ...)
-// attached to an item. ID is what individual files are addressed by
-// (e.g. for downloads) - Role alone isn't unique, since an item can have
-// several files sharing a role (multiple voice memos, multi-page
-// documents), unlike the front/back case it was originally designed for.
-type File struct {
-	ID          string `dynamodbav:"id" json:"id"`
-	Role        string `dynamodbav:"role" json:"role"`                       // e.g. "front", "back", "page", "voice-memo"
-	Order       int    `dynamodbav:"order,omitempty" json:"order,omitempty"` // page/sequence order within its role
-	Key         string `dynamodbav:"key" json:"key"`                         // S3 object key
-	ContentType string `dynamodbav:"contentType" json:"contentType"`
-	SizeBytes   int64  `dynamodbav:"sizeBytes" json:"sizeBytes"`
-}
-
-// Item is one archived record: metadata plus zero or more attached files.
-// Date/Location/Notes/Tags/People are all optional at creation and set
-// later via Update - a capture flow often knows the file before it knows
-// the details.
-type Item struct {
-	ID        string           `dynamodbav:"id" json:"id"`
-	AccountID string           `dynamodbav:"accountId" json:"accountId"` // whose catalog this belongs to - today always a Cognito user's sub, but named for a future org/team account too
-	Type      string           `dynamodbav:"type" json:"type"`           // e.g. "photo", "document" - open-ended for future data types
-	Title     string           `dynamodbav:"title" json:"title"`
-	Date      *ArchiveDate     `dynamodbav:"date,omitempty" json:"date,omitempty"`
-	Location  *ArchiveLocation `dynamodbav:"location,omitempty" json:"location,omitempty"`
-	Notes     string           `dynamodbav:"notes,omitempty" json:"notes,omitempty"`
-	Tags      []string         `dynamodbav:"tags,omitempty" json:"tags,omitempty"`
-	People    []string         `dynamodbav:"people,omitempty" json:"people,omitempty"`
-	Files     []File           `dynamodbav:"files" json:"files"`
-	CreatedAt time.Time        `dynamodbav:"createdAt" json:"createdAt"`
-	UpdatedAt time.Time        `dynamodbav:"updatedAt" json:"updatedAt"`
-}
-
-// ItemStore reads and writes Items in a single DynamoDB table.
-type ItemStore struct {
-	client    *dynamodb.Client
-	tableName string
-}
-
-func NewItemStore(client *dynamodb.Client, tableName string) *ItemStore {
-	return &ItemStore{client: client, tableName: tableName}
-}
-
-// Create writes a new item with a generated ID and returns it.
-func (s *ItemStore) Create(ctx context.Context, accountID, itemType, title string) (Item, error) {
+// CreateItem writes a new item, failing if one already exists at that id.
+func (s *Store) CreateItem(ctx context.Context, item *domain.Item) error {
 	now := time.Now().UTC()
-	item := Item{
-		ID:        uuid.NewString(),
-		AccountID: accountID,
-		Type:      itemType,
-		Title:     title,
-		Files:     []File{},
-		CreatedAt: now,
-		UpdatedAt: now,
+	item.CreatedAt = now
+	item.UpdatedAt = now
+	item.Version = 1
+
+	if err := item.Validate(s.types); err != nil {
+		return err
+	}
+	if err := item.Normalize(s.types); err != nil {
+		return err
 	}
 
-	if err := s.put(ctx, item); err != nil {
-		return Item{}, err
-	}
-	return item, nil
-}
-
-// Get fetches a single item by ID, scoped to accountID. An item that
-// exists but belongs to a different account is reported as ErrNotFound,
-// same as one that doesn't exist at all - callers should never be able to
-// tell the two apart.
-func (s *ItemStore) Get(ctx context.Context, id, accountID string) (Item, error) {
-	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: &s.tableName,
-		Key: map[string]types.AttributeValue{
-			"id": &types.AttributeValueMemberS{Value: id},
-		},
-	})
+	av, err := marshalItem(item)
 	if err != nil {
-		return Item{}, fmt.Errorf("get item: %w", err)
-	}
-	if out.Item == nil {
-		return Item{}, ErrNotFound
-	}
-
-	var item Item
-	if err := attributevalue.UnmarshalMap(out.Item, &item); err != nil {
-		return Item{}, fmt.Errorf("unmarshal item: %w", err)
-	}
-	if item.AccountID != accountID {
-		return Item{}, ErrNotFound
-	}
-	return item, nil
-}
-
-// List returns every item belonging to accountID. Fine at hobby scale to
-// Scan the whole table and filter in Go; switch to a Query against a
-// GSI on accountID if the table grows large.
-func (s *ItemStore) List(ctx context.Context, accountID string) ([]Item, error) {
-	out, err := s.client.Scan(ctx, &dynamodb.ScanInput{
-		TableName: &s.tableName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("scan items: %w", err)
-	}
-
-	all := make([]Item, 0, len(out.Items))
-	if err := attributevalue.UnmarshalListOfMaps(out.Items, &all); err != nil {
-		return nil, fmt.Errorf("unmarshal items: %w", err)
-	}
-
-	items := make([]Item, 0, len(all))
-	for _, item := range all {
-		if item.AccountID == accountID {
-			items = append(items, item)
-		}
-	}
-	return items, nil
-}
-
-// AddFile attaches a file to an existing item, assigning it a generated ID.
-//
-// This is a read-modify-write, not an atomic append: two concurrent
-// uploads to the same item could race and overwrite each other's file
-// list. Fine for a single-user hobby project; switch to an UpdateItem
-// with a list_append expression if that ever stops being true.
-func (s *ItemStore) AddFile(ctx context.Context, id, accountID string, file File) (Item, error) {
-	item, err := s.Get(ctx, id, accountID)
-	if err != nil {
-		return Item{}, err
-	}
-
-	file.ID = uuid.NewString()
-	item.Files = append(item.Files, file)
-	item.UpdatedAt = time.Now().UTC()
-
-	if err := s.put(ctx, item); err != nil {
-		return Item{}, err
-	}
-	return item, nil
-}
-
-// Update applies apply to an existing item's metadata and saves the
-// result. apply should only touch the fields it means to change - Update
-// takes care of stamping UpdatedAt.
-//
-// Same read-modify-write caveat as AddFile: not safe under concurrent
-// writes to the same item, which is fine at single-user hobby scale.
-func (s *ItemStore) Update(ctx context.Context, id, accountID string, apply func(*Item)) (Item, error) {
-	item, err := s.Get(ctx, id, accountID)
-	if err != nil {
-		return Item{}, err
-	}
-
-	apply(&item)
-	item.UpdatedAt = time.Now().UTC()
-
-	if err := s.put(ctx, item); err != nil {
-		return Item{}, err
-	}
-	return item, nil
-}
-
-func (s *ItemStore) put(ctx context.Context, item Item) error {
-	av, err := attributevalue.MarshalMap(item)
-	if err != nil {
-		return fmt.Errorf("marshal item: %w", err)
+		return err
 	}
 
 	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: &s.tableName,
-		Item:      av,
+		TableName:           &s.table,
+		Item:                av,
+		ConditionExpression: aws.String("attribute_not_exists(pk)"),
 	})
 	if err != nil {
+		var failed *types.ConditionalCheckFailedException
+		if errors.As(err, &failed) {
+			return ErrAlreadyExists
+		}
+		return fmt.Errorf("create item: %w", err)
+	}
+	return nil
+}
+
+// GetItem fetches one item.
+//
+// Scoping is now part of the key rather than a comparison afterwards. The old
+// implementation read the row by id alone and then compared accountId in Go,
+// which meant another archive's data was in this process's memory before the
+// decision to hide it was made.
+func (s *Store) GetItem(ctx context.Context, archive domain.ArchiveID, id domain.ItemID) (domain.Item, error) {
+	key := dynamo.ItemKey(archive, id)
+
+	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: &s.table,
+		Key:       keyToAV(key),
+	})
+	if err != nil {
+		return domain.Item{}, fmt.Errorf("get item: %w", err)
+	}
+	if out.Item == nil {
+		return domain.Item{}, ErrNotFound
+	}
+	return unmarshalItem(out.Item)
+}
+
+// ListItems returns a page of cards, newest first by default.
+//
+// This Queries the secondary index rather than scanning the table. The old
+// implementation read every row in the table and discarded the ones belonging
+// to other accounts - and, because it never passed on DynamoDB's
+// LastEvaluatedKey, silently stopped at the first megabyte. Past a few hundred
+// items, photographs simply went missing with no error anywhere.
+func (s *Store) ListItems(ctx context.Context, archive domain.ArchiveID, opts ListOptions) (ItemPage, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = defaultPageLimit
+	}
+	if limit > maxPageLimit {
+		limit = maxPageLimit
+	}
+
+	startKey, err := decodeCursor(opts.Cursor, opts.FilterHash)
+	if err != nil {
+		return ItemPage{}, err
+	}
+
+	out, err := s.client.Query(ctx, &dynamodb.QueryInput{
+		TableName:              &s.table,
+		IndexName:              aws.String(dynamo.GSI1Name),
+		KeyConditionExpression: aws.String("gsi1pk = :pk"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":pk": &types.AttributeValueMemberS{Value: dynamo.ItemIndexPK(archive)},
+		},
+		ScanIndexForward:  aws.Bool(opts.Ascending),
+		Limit:             aws.Int32(int32(limit)),
+		ExclusiveStartKey: startKey,
+	})
+	if err != nil {
+		return ItemPage{}, fmt.Errorf("list items: %w", err)
+	}
+
+	page := ItemPage{Items: make([]domain.ItemCard, 0, len(out.Items))}
+	for _, av := range out.Items {
+		card, err := unmarshalCard(av)
+		if err != nil {
+			return ItemPage{}, err
+		}
+		page.Items = append(page.Items, card)
+	}
+
+	page.NextCursor, err = encodeCursor(opts.FilterHash, out.LastEvaluatedKey)
+	if err != nil {
+		return ItemPage{}, err
+	}
+	return page, nil
+}
+
+// PatchItem applies a partial metadata update.
+//
+// ifVersion, when supplied, is the version the caller last saw - an If-Match.
+// If the item has moved on, the write is refused with ErrVersionConflict so
+// the caller learns their edit was based on stale data. When it is omitted,
+// a conflict is retried internally instead.
+func (s *Store) PatchItem(
+	ctx context.Context,
+	archive domain.ArchiveID,
+	id domain.ItemID,
+	patch domain.ItemPatch,
+	ifVersion *int64,
+) (domain.Item, error) {
+	return s.mutateItem(ctx, archive, id, ifVersion, func(item *domain.Item) error {
+		patch.Apply(item)
+		return nil
+	})
+}
+
+// DeleteItem removes an item. The caller is responsible for sweeping its S3
+// objects afterwards - in that order, because an orphaned object is invisible
+// and cheap to clean up later, while an orphaned row is a broken image in the
+// gallery.
+func (s *Store) DeleteItem(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, ifVersion *int64) error {
+	input := &dynamodb.DeleteItemInput{
+		TableName:           &s.table,
+		Key:                 keyToAV(dynamo.ItemKey(archive, id)),
+		ConditionExpression: aws.String("attribute_exists(pk)"),
+	}
+
+	if ifVersion != nil {
+		input.ConditionExpression = aws.String("attribute_exists(pk) AND version = :v")
+		input.ExpressionAttributeValues = map[string]types.AttributeValue{
+			":v": numberAV(*ifVersion),
+		}
+	}
+
+	_, err := s.client.DeleteItem(ctx, input)
+	if err != nil {
+		var failed *types.ConditionalCheckFailedException
+		if errors.As(err, &failed) {
+			if ifVersion != nil {
+				// Either it is gone or it moved on; the caller's precondition
+				// failed either way.
+				return ErrVersionConflict
+			}
+			return ErrNotFound
+		}
+		return fmt.Errorf("delete item: %w", err)
+	}
+	return nil
+}
+
+// AppendFile attaches a file to an item.
+//
+// The old implementation read the item, appended in Go, and wrote the whole
+// thing back with no condition - so two uploads finishing at once would each
+// write a list missing the other's file, and one upload just vanished. Here
+// the write is conditional on the version that was read, so a lost update is
+// impossible; an unpinned caller simply retries.
+func (s *Store) AppendFile(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, file domain.File) (domain.Item, error) {
+	if file.ID == "" {
+		file.ID = domain.NewFileID()
+	}
+	if file.UploadedAt.IsZero() {
+		file.UploadedAt = time.Now().UTC()
+	}
+	if file.Status == "" {
+		file.Status = domain.FileStatusPending
+	}
+
+	return s.mutateItem(ctx, archive, id, nil, func(item *domain.Item) error {
+		for _, existing := range item.Files {
+			if existing.ID == file.ID {
+				// Confirming the same upload twice is a retry, not a second
+				// file. Minting the id before the upload is what makes this
+				// safely idempotent.
+				return nil
+			}
+		}
+		item.Files = append(item.Files, file)
+		return nil
+	})
+}
+
+// DeleteFile detaches a file.
+func (s *Store) DeleteFile(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, fileID domain.FileID, ifVersion *int64) (domain.Item, error) {
+	return s.mutateItem(ctx, archive, id, ifVersion, func(item *domain.Item) error {
+		for idx, f := range item.Files {
+			if f.ID == fileID {
+				item.Files = append(item.Files[:idx], item.Files[idx+1:]...)
+				return nil
+			}
+		}
+		return ErrNotFound
+	})
+}
+
+// ReorderFiles sets the display order by replacing the whole list.
+//
+// Whole-list replacement rather than per-file index arithmetic: the order is
+// simply the order of the slice, so there is nothing to renumber and no way
+// for two files to claim the same position.
+func (s *Store) ReorderFiles(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, order []domain.FileID, ifVersion *int64) (domain.Item, error) {
+	return s.mutateItem(ctx, archive, id, ifVersion, func(item *domain.Item) error {
+		if len(order) != len(item.Files) {
+			return fmt.Errorf("reorder must list all %d files, got %d", len(item.Files), len(order))
+		}
+
+		byID := make(map[domain.FileID]domain.File, len(item.Files))
+		for _, f := range item.Files {
+			byID[f.ID] = f
+		}
+
+		reordered := make([]domain.File, 0, len(order))
+		for _, fileID := range order {
+			f, ok := byID[fileID]
+			if !ok {
+				return fmt.Errorf("reorder names unknown or duplicate file %q", fileID)
+			}
+			delete(byID, fileID)
+			reordered = append(reordered, f)
+		}
+
+		item.Files = reordered
+		return nil
+	})
+}
+
+// mutateItem is read, modify, conditional write, with a bounded retry.
+//
+// This is deliberately not an UpdateItem expression. Several stored fields are
+// derived from the item as a whole - the cover, the capabilities, the index
+// sort key - and none of them can be recomputed from a partial patch without
+// seeing the rest of the item. Reading first is what makes them correct, and
+// the version condition is what makes it safe: the old code's bug was the
+// missing condition, not the read.
+func (s *Store) mutateItem(
+	ctx context.Context,
+	archive domain.ArchiveID,
+	id domain.ItemID,
+	ifVersion *int64,
+	mutate func(*domain.Item) error,
+) (domain.Item, error) {
+	for attempt := 0; ; attempt++ {
+		item, err := s.GetItem(ctx, archive, id)
+		if err != nil {
+			return domain.Item{}, err
+		}
+
+		if ifVersion != nil && *ifVersion != item.Version {
+			return domain.Item{}, ErrVersionConflict
+		}
+
+		expected := item.Version
+
+		if err := mutate(&item); err != nil {
+			return domain.Item{}, err
+		}
+
+		item.UpdatedAt = time.Now().UTC()
+		item.Version = expected + 1
+
+		if err := item.Validate(s.types); err != nil {
+			return domain.Item{}, err
+		}
+		if err := item.Normalize(s.types); err != nil {
+			return domain.Item{}, err
+		}
+
+		err = s.putItemIfVersion(ctx, &item, expected)
+		if err == nil {
+			return item, nil
+		}
+		if !errors.Is(err, ErrVersionConflict) {
+			return domain.Item{}, err
+		}
+
+		// The caller pinned a version, so a conflict is genuinely their
+		// answer: someone else edited it and they should be told, not have
+		// their stale edit quietly reapplied.
+		if ifVersion != nil || attempt >= maxConflictRetries {
+			return domain.Item{}, ErrVersionConflict
+		}
+	}
+}
+
+func (s *Store) putItemIfVersion(ctx context.Context, item *domain.Item, expected int64) error {
+	av, err := marshalItem(item)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:           &s.table,
+		Item:                av,
+		ConditionExpression: aws.String("version = :expected"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":expected": numberAV(expected),
+		},
+	})
+	if err != nil {
+		var failed *types.ConditionalCheckFailedException
+		if errors.As(err, &failed) {
+			return ErrVersionConflict
+		}
 		return fmt.Errorf("put item: %w", err)
 	}
+	return nil
+}
+
+func marshalItem(item *domain.Item) (map[string]types.AttributeValue, error) {
+	av, err := attributevalue.MarshalMap(item)
+	if err != nil {
+		return nil, fmt.Errorf("marshal item: %w", err)
+	}
+
+	key := dynamo.ItemKey(item.ArchiveID, item.ID)
+	av["pk"] = &types.AttributeValueMemberS{Value: key.PK}
+	av["sk"] = &types.AttributeValueMemberS{Value: key.SK}
+	av["gsi1pk"] = &types.AttributeValueMemberS{Value: dynamo.ItemIndexPK(item.ArchiveID)}
+	av["gsi1sk"] = &types.AttributeValueMemberS{Value: dynamo.ItemIndexSK(&item.ItemCard)}
+	return av, nil
+}
+
+func unmarshalItem(av map[string]types.AttributeValue) (domain.Item, error) {
+	var item domain.Item
+	if err := attributevalue.UnmarshalMap(av, &item); err != nil {
+		return domain.Item{}, fmt.Errorf("unmarshal item: %w", err)
+	}
+	if err := fillIdentity(&item.ItemCard, av); err != nil {
+		return domain.Item{}, err
+	}
+	return item, nil
+}
+
+func unmarshalCard(av map[string]types.AttributeValue) (domain.ItemCard, error) {
+	var card domain.ItemCard
+	if err := attributevalue.UnmarshalMap(av, &card); err != nil {
+		return domain.ItemCard{}, fmt.Errorf("unmarshal item card: %w", err)
+	}
+	if err := fillIdentity(&card, av); err != nil {
+		return domain.ItemCard{}, err
+	}
+	return card, nil
+}
+
+// fillIdentity recovers the ids from the keys. They are stored only in pk/sk
+// rather than duplicated as attributes, so there is exactly one source of
+// truth for where a row lives.
+func fillIdentity(card *domain.ItemCard, av map[string]types.AttributeValue) error {
+	pk, err := stringAttr(av, "pk")
+	if err != nil {
+		return err
+	}
+	sk, err := stringAttr(av, "sk")
+	if err != nil {
+		return err
+	}
+
+	archiveID, err := dynamo.ArchiveIDFromPK(pk)
+	if err != nil {
+		return err
+	}
+	itemID, err := dynamo.ItemIDFromSK(sk)
+	if err != nil {
+		return err
+	}
+
+	card.ArchiveID = archiveID
+	card.ID = itemID
 	return nil
 }

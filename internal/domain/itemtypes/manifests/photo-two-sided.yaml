@@ -1,0 +1,32 @@
+id: photo-two-sided
+version: 1
+label: Two-sided photo
+icon: layers
+category: photos
+
+# The type that exists because so much of what is written about a photograph
+# is written on its back: a date, a place, a list of names.
+slots:
+  - id: front
+    label: Front
+    accepts: [image]
+    max: 1
+
+  - id: back
+    label: Back
+    accepts: [image]
+    max: 1
+
+  - id: voice-memo
+    label: Voice memos
+    accepts: [audio]
+    max: 20
+    ordered: true
+    maxSizeBytes: 104857600
+
+cover:
+  prefer: [front, back]
+
+presentation:
+  - { primitive: flippable, slots: [front, back] }
+  - { primitive: audio, slots: [voice-memo] }

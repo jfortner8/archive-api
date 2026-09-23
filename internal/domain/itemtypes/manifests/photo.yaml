@@ -1,0 +1,28 @@
+id: photo
+version: 1
+label: Photo
+icon: image
+category: photos
+
+slots:
+  - id: photo
+    label: Photograph
+    accepts: [image]
+    max: 1
+
+  # Every type carries voice memos. They are the one thing in this archive
+  # that is about the object rather than in it - someone saying who the people
+  # in a photograph were, while they still remember.
+  - id: voice-memo
+    label: Voice memos
+    accepts: [audio]
+    max: 20
+    ordered: true
+    maxSizeBytes: 104857600
+
+cover:
+  prefer: [photo]
+
+presentation:
+  - { primitive: single-image, slots: [photo] }
+  - { primitive: audio, slots: [voice-memo] }

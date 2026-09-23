@@ -1,4 +1,4 @@
-.PHONY: build run test lint tidy dev-up dev-down dev-setup
+.PHONY: build run test test-integration lint tidy dev-up dev-down dev-setup
 
 build:
 	go build -o bin/api ./cmd/api
@@ -20,6 +20,17 @@ run:
 
 test:
 	go test ./...
+
+# The store tests need a real DynamoDB - they exercise conditional writes,
+# index ordering and cursor paging, none of which a hand-written fake would
+# tell you the truth about. They skip when DYNAMODB_ENDPOINT is unset, so
+# plain `make test` stays fast and dependency-free; this target is the one
+# that actually covers internal/store.
+#
+# Each test provisions and drops its own table, so `make dev-setup` is not a
+# prerequisite - only `make dev-up`.
+test-integration:
+	DYNAMODB_ENDPOINT=http://localhost:8000 go test ./... -count=1
 
 lint:
 	go vet ./...

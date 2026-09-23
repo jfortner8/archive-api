@@ -5,57 +5,57 @@ import (
 	"fmt"
 
 	"github.com/jfortner8/archive-api/internal/authtoken"
-	"github.com/jfortner8/archive-api/internal/store"
+	"github.com/jfortner8/archive-api/internal/legacystore"
 )
 
-// fakeItemsStore is an in-memory stand-in for *store.ItemStore, so handler
+// fakeItemsStore is an in-memory stand-in for *legacystore.ItemStore, so handler
 // tests don't need a real (or local) DynamoDB. Enforces accountID scoping
 // the same way the real store does, so tests catch cross-account bugs,
 // not just compile errors.
 type fakeItemsStore struct {
-	items map[string]store.Item
+	items map[string]legacystore.Item
 	err   error // when set, every call fails with this error
 }
 
-func newFakeItemsStore(seed ...store.Item) *fakeItemsStore {
-	f := &fakeItemsStore{items: map[string]store.Item{}}
+func newFakeItemsStore(seed ...legacystore.Item) *fakeItemsStore {
+	f := &fakeItemsStore{items: map[string]legacystore.Item{}}
 	for _, it := range seed {
 		f.items[it.ID] = it
 	}
 	return f
 }
 
-func (f *fakeItemsStore) Create(_ context.Context, accountID, itemType, title string) (store.Item, error) {
+func (f *fakeItemsStore) Create(_ context.Context, accountID, itemType, title string) (legacystore.Item, error) {
 	if f.err != nil {
-		return store.Item{}, f.err
+		return legacystore.Item{}, f.err
 	}
-	item := store.Item{
+	item := legacystore.Item{
 		ID:        fmt.Sprintf("item-%d", len(f.items)+1),
 		AccountID: accountID,
 		Type:      itemType,
 		Title:     title,
-		Files:     []store.File{},
+		Files:     []legacystore.File{},
 	}
 	f.items[item.ID] = item
 	return item, nil
 }
 
-func (f *fakeItemsStore) Get(_ context.Context, id, accountID string) (store.Item, error) {
+func (f *fakeItemsStore) Get(_ context.Context, id, accountID string) (legacystore.Item, error) {
 	if f.err != nil {
-		return store.Item{}, f.err
+		return legacystore.Item{}, f.err
 	}
 	item, ok := f.items[id]
 	if !ok || item.AccountID != accountID {
-		return store.Item{}, store.ErrNotFound
+		return legacystore.Item{}, legacystore.ErrNotFound
 	}
 	return item, nil
 }
 
-func (f *fakeItemsStore) List(_ context.Context, accountID string) ([]store.Item, error) {
+func (f *fakeItemsStore) List(_ context.Context, accountID string) ([]legacystore.Item, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	items := make([]store.Item, 0, len(f.items))
+	items := make([]legacystore.Item, 0, len(f.items))
 	for _, it := range f.items {
 		if it.AccountID == accountID {
 			items = append(items, it)
@@ -64,13 +64,13 @@ func (f *fakeItemsStore) List(_ context.Context, accountID string) ([]store.Item
 	return items, nil
 }
 
-func (f *fakeItemsStore) AddFile(_ context.Context, id, accountID string, file store.File) (store.Item, error) {
+func (f *fakeItemsStore) AddFile(_ context.Context, id, accountID string, file legacystore.File) (legacystore.Item, error) {
 	if f.err != nil {
-		return store.Item{}, f.err
+		return legacystore.Item{}, f.err
 	}
 	item, ok := f.items[id]
 	if !ok || item.AccountID != accountID {
-		return store.Item{}, store.ErrNotFound
+		return legacystore.Item{}, legacystore.ErrNotFound
 	}
 	file.ID = fmt.Sprintf("file-%d", len(item.Files)+1)
 	item.Files = append(item.Files, file)
@@ -78,13 +78,13 @@ func (f *fakeItemsStore) AddFile(_ context.Context, id, accountID string, file s
 	return item, nil
 }
 
-func (f *fakeItemsStore) Update(_ context.Context, id, accountID string, apply func(*store.Item)) (store.Item, error) {
+func (f *fakeItemsStore) Update(_ context.Context, id, accountID string, apply func(*legacystore.Item)) (legacystore.Item, error) {
 	if f.err != nil {
-		return store.Item{}, f.err
+		return legacystore.Item{}, f.err
 	}
 	item, ok := f.items[id]
 	if !ok || item.AccountID != accountID {
-		return store.Item{}, store.ErrNotFound
+		return legacystore.Item{}, legacystore.ErrNotFound
 	}
 	apply(&item)
 	f.items[id] = item
