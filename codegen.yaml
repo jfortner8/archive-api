@@ -1,0 +1,14 @@
+# oapi-codegen config. Run via `make generate`.
+#
+# Models only, deliberately. The strict-server target would also generate a
+# handler interface, but it forces every request and response through
+# generated wrapper types, and this service's handlers need the raw
+# http.Request for ETag and If-Match handling. Generated models plus the
+# route-parity test in internal/httpapi are enough to make drift fail the
+# build rather than reach a client.
+package: gen
+output: internal/httpapi/gen/models.gen.go
+generate:
+  models: true
+output-options:
+  skip-prune: true

@@ -260,6 +260,7 @@ func (i *Item) findCover(reg *itemtypes.Registry) *File {
 // must call before saving, so none of them can forget one.
 func (i *Item) Normalize(reg *itemtypes.Registry) error {
 	if i.Date != nil {
+		i.Date.Resolve()
 		n, err := i.Date.Normalize()
 		if err != nil {
 			return err
