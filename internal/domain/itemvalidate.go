@@ -73,7 +73,7 @@ func (i *Item) Validate(reg *itemtypes.Registry) error {
 	}
 
 	errs = append(errs, validateFiles(typ, i.Files)...)
-	errs = append(errs, validateAttributes(typ, i.Attributes)...)
+	errs = append(errs, ValidateAttributes(typ.ID, typ.Attributes, i.Attributes)...)
 	errs = append(errs, validateSubjects(i.Subjects)...)
 
 	return errs.OrNil()
@@ -153,9 +153,19 @@ func validateFiles(typ *itemtypes.Type, files []File) ValidationErrors {
 	return errs
 }
 
-func validateAttributes(typ *itemtypes.Type, attrs map[string]any) ValidationErrors {
+// ValidateAttributes checks a bag of type-specific values against what a type
+// declares. Shared by items and subjects, because "a small validated map of
+// fields this kind of thing has" is the same problem in both places - a CD's
+// artist and a pet's breed differ only in which manifest declares them.
+func ValidateAttributes(typeID string, decls []itemtypes.Attribute, attrs map[string]any) ValidationErrors {
 	var errs ValidationErrors
 
+	byID := make(map[string]*itemtypes.Attribute, len(decls))
+	for i := range decls {
+		byID[decls[i].ID] = &decls[i]
+	}
+
+	// Sorted so the same bad request always produces the same response.
 	keys := make([]string, 0, len(attrs))
 	for k := range attrs {
 		keys = append(keys, k)
@@ -165,11 +175,11 @@ func validateAttributes(typ *itemtypes.Type, attrs map[string]any) ValidationErr
 	for _, key := range keys {
 		field := "attributes." + key
 
-		decl, ok := typ.Attribute(key)
+		decl, ok := byID[key]
 		if !ok {
 			errs = append(errs, FieldError{
 				Field: field, Code: "unknown_attribute",
-				Message: fmt.Sprintf("%q declares no attribute %q", typ.ID, key),
+				Message: fmt.Sprintf("%q declares no attribute %q", typeID, key),
 			})
 			continue
 		}

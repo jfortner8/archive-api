@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/jfortner8/archive-api/internal/domain/itemtypes"
+	"github.com/jfortner8/archive-api/internal/domain/subjecttypes"
 )
 
 var (
@@ -40,15 +41,19 @@ type Store struct {
 	// types is consulted when normalizing an item, to resolve cover
 	// preference and validate slots.
 	types *itemtypes.Registry
+
+	// subjectKinds is the equivalent for people and pets.
+	subjectKinds *subjecttypes.Registry
 }
 
-func New(client *dynamodb.Client, table string, types *itemtypes.Registry) *Store {
-	return &Store{client: client, table: table, types: types}
+func New(client *dynamodb.Client, table string, types *itemtypes.Registry, kinds *subjecttypes.Registry) *Store {
+	return &Store{client: client, table: table, types: types, subjectKinds: kinds}
 }
 
-// Types exposes the registry the store was built with, so callers that
-// already hold a Store need not be handed the registry separately.
-func (s *Store) Types() *itemtypes.Registry { return s.types }
+// Types exposes the registries the store was built with, so callers that
+// already hold a Store need not be handed them separately.
+func (s *Store) Types() *itemtypes.Registry           { return s.types }
+func (s *Store) SubjectKinds() *subjecttypes.Registry { return s.subjectKinds }
 
 // maxConflictRetries bounds the automatic retry on an unpinned conditional
 // write. Two people editing the same item at the same moment is rare, and

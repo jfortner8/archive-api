@@ -10,6 +10,7 @@ import (
 	"github.com/jfortner8/archive-api/internal/awsclients"
 	"github.com/jfortner8/archive-api/internal/config"
 	"github.com/jfortner8/archive-api/internal/domain/itemtypes"
+	"github.com/jfortner8/archive-api/internal/domain/subjecttypes"
 	"github.com/jfortner8/archive-api/internal/httpapi"
 	"github.com/jfortner8/archive-api/internal/storage"
 	"github.com/jfortner8/archive-api/internal/store"
@@ -34,10 +35,11 @@ func main() {
 	}
 
 	server := &httpapi.Server{
-		Store:    store.New(clients.Dynamo, cfg.DynamoTable, itemtypes.Default),
+		Store:    store.New(clients.Dynamo, cfg.DynamoTable, itemtypes.Default, subjecttypes.Default),
 		Files:    storage.NewFileStore(clients.S3Presign, cfg.S3Bucket),
 		Verifier: verifier,
 		Types:    itemtypes.Default,
+		Kinds:    subjecttypes.Default,
 		APIKey:   cfg.APIKey,
 	}
 

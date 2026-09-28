@@ -107,17 +107,32 @@ const (
 	MediaFamilyVideo   MediaFamily = "video"
 )
 
+// Defines values for RelationshipType.
+const (
+	RelationshipTypeLittermate RelationshipType = "littermate"
+	RelationshipTypeOwner      RelationshipType = "owner"
+	RelationshipTypeParent     RelationshipType = "parent"
+	RelationshipTypePartner    RelationshipType = "partner"
+)
+
 // Defines values for Role.
 const (
-	Editor Role = "editor"
-	Owner  Role = "owner"
-	Viewer Role = "viewer"
+	RoleEditor Role = "editor"
+	RoleOwner  Role = "owner"
+	RoleViewer Role = "viewer"
 )
 
 // Defines values for ListItemsParamsSort.
 const (
 	DateAsc  ListItemsParamsSort = "date:asc"
 	DateDesc ListItemsParamsSort = "date:desc"
+)
+
+// Defines values for GetSubjectTreeParamsDirection.
+const (
+	Ancestors   GetSubjectTreeParamsDirection = "ancestors"
+	Both        GetSubjectTreeParamsDirection = "both"
+	Descendants GetSubjectTreeParamsDirection = "descendants"
 )
 
 // Archive defines model for Archive.
@@ -359,13 +374,17 @@ type ItemCreate struct {
 type ItemPatch struct {
 	Attributes  *map[string]interface{} `json:"attributes"`
 	CoverFileId *string                 `json:"coverFileId"`
-	Date        *ArchiveDate            `json:"date"`
-	Location    *ArchiveLocation        `json:"location"`
-	Notes       *string                 `json:"notes"`
-	PlaceId     *string                 `json:"placeId"`
-	Subjects    *[]SubjectRef           `json:"subjects"`
-	Tags        *[]string               `json:"tags"`
-	Title       *string                 `json:"title,omitempty"`
+
+	// Date Send `null` to clear the date.
+	Date *ArchiveDate `json:"date,omitempty"`
+
+	// Location Send `null` to clear the location.
+	Location *ArchiveLocation `json:"location,omitempty"`
+	Notes    *string          `json:"notes"`
+	PlaceId  *string          `json:"placeId"`
+	Subjects *[]SubjectRef    `json:"subjects"`
+	Tags     *[]string        `json:"tags"`
+	Title    *string          `json:"title,omitempty"`
 }
 
 // ItemType defines model for ItemType.
@@ -448,14 +467,172 @@ type PageInfo struct {
 	Limit   int     `json:"limit"`
 }
 
+// Relationship defines model for Relationship.
+type Relationship struct {
+	// End When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	End           *ArchiveDate `json:"end,omitempty"`
+	FromSubjectId string       `json:"fromSubjectId"`
+
+	// Id Derived from the endpoints and the type, so recording the same fact twice records it once.
+	Id    string  `json:"id"`
+	Notes *string `json:"notes,omitempty"`
+
+	// Start When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	Start       *ArchiveDate `json:"start,omitempty"`
+	ToSubjectId string       `json:"toSubjectId"`
+
+	// Type `parent` runs from parent to child and is the only edge that forms descent. `partner` is symmetric and entirely independent of it - people marry and have no children, and have children without marrying. `owner` runs from a person to an animal. `littermate` is symmetric, between animals.
+	Type RelationshipType `json:"type"`
+}
+
+// RelationshipCreate defines model for RelationshipCreate.
+type RelationshipCreate struct {
+	// End When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	End           *ArchiveDate `json:"end,omitempty"`
+	FromSubjectId string       `json:"fromSubjectId"`
+	Notes         *string      `json:"notes,omitempty"`
+
+	// Start When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	Start       *ArchiveDate `json:"start,omitempty"`
+	ToSubjectId string       `json:"toSubjectId"`
+
+	// Type `parent` runs from parent to child and is the only edge that forms descent. `partner` is symmetric and entirely independent of it - people marry and have no children, and have children without marrying. `owner` runs from a person to an animal. `littermate` is symmetric, between animals.
+	Type RelationshipType `json:"type"`
+}
+
+// RelationshipType `parent` runs from parent to child and is the only edge that forms descent. `partner` is symmetric and entirely independent of it - people marry and have no children, and have children without marrying. `owner` runs from a person to an animal. `littermate` is symmetric, between animals.
+type RelationshipType string
+
 // Role defines model for Role.
 type Role string
+
+// Subject Whoever or whatever a record is about. People and pets are one entity with a kind rather than two parallel ones - what they share is the part that would otherwise multiply with every new kind: one tag list on items, one filter, one index attribute.
+type Subject struct {
+	Aliases   []string `json:"aliases"`
+	ArchiveId string   `json:"archiveId"`
+
+	// Attributes What this kind declares - a person's gender, a pet's species and breed. Descriptive only; nothing here is read by the family tree.
+	Attributes *map[string]interface{} `json:"attributes,omitempty"`
+
+	// Birth When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	Birth *ArchiveDate `json:"birth,omitempty"`
+
+	// BirthNormalized Server-derived, so clients never parse dates and ordering is a guarantee rather than something each client recomputes. `dateSort` is the midpoint of the span for every kind, so a wide range no longer claims to be as old as its earliest possible day.
+	BirthNormalized *DateNormalized `json:"birthNormalized,omitempty"`
+
+	// CoverItemId The item used as this subject's portrait.
+	CoverItemId *string   `json:"coverItemId,omitempty"`
+	CoverUrl    *string   `json:"coverUrl,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+
+	// Death When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	Death *ArchiveDate `json:"death,omitempty"`
+
+	// DeathNormalized Server-derived, so clients never parse dates and ordering is a guarantee rather than something each client recomputes. `dateSort` is the midpoint of the span for every kind, so a wide range no longer claims to be as old as its earliest possible day.
+	DeathNormalized *DateNormalized `json:"deathNormalized,omitempty"`
+
+	// DisplayName What appears on a caption and a tree node. Separate from the name parts, because an archive is full of subjects whose full name nobody knows.
+	DisplayName string    `json:"displayName"`
+	FamilyName  *string   `json:"familyName,omitempty"`
+	GivenNames  *string   `json:"givenNames,omitempty"`
+	Id          string    `json:"id"`
+	Kind        string    `json:"kind"`
+	KindVersion int       `json:"kindVersion"`
+	Notes       *string   `json:"notes,omitempty"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// SubjectCreate defines model for SubjectCreate.
+type SubjectCreate struct {
+	Aliases    *[]string               `json:"aliases,omitempty"`
+	Attributes *map[string]interface{} `json:"attributes,omitempty"`
+
+	// Birth When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	Birth       *ArchiveDate `json:"birth,omitempty"`
+	CoverItemId *string      `json:"coverItemId,omitempty"`
+
+	// Death When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	Death       *ArchiveDate `json:"death,omitempty"`
+	DisplayName string       `json:"displayName"`
+	FamilyName  *string      `json:"familyName,omitempty"`
+	GivenNames  *string      `json:"givenNames,omitempty"`
+	Kind        string       `json:"kind"`
+	Notes       *string      `json:"notes,omitempty"`
+}
+
+// SubjectKind defines model for SubjectKind.
+type SubjectKind struct {
+	Attributes *[]ItemTypeAttribute `json:"attributes,omitempty"`
+	Icon       *string              `json:"icon,omitempty"`
+	Id         string               `json:"id"`
+	Label      string               `json:"label"`
+
+	// Plural What a nav tab says. Declared rather than derived, because English pluralisation is not a rule.
+	Plural  string `json:"plural"`
+	Version int    `json:"version"`
+}
+
+// SubjectPatch Absent fields are left alone; fields sent as `null` are cleared.
+type SubjectPatch struct {
+	Aliases    *[]string               `json:"aliases"`
+	Attributes *map[string]interface{} `json:"attributes"`
+
+	// Birth Send `null` to clear the birth date.
+	Birth       *ArchiveDate `json:"birth,omitempty"`
+	CoverItemId *string      `json:"coverItemId"`
+
+	// Death Send `null` to clear the death date.
+	Death       *ArchiveDate `json:"death,omitempty"`
+	DisplayName *string      `json:"displayName,omitempty"`
+	FamilyName  *string      `json:"familyName"`
+	GivenNames  *string      `json:"givenNames"`
+	Notes       *string      `json:"notes"`
+}
 
 // SubjectRef A person or a pet tagged in this item, denormalized so a gallery tile needs no second lookup. One list rather than separate people and animal lists, so filters and indexes do not multiply with each new kind of subject.
 type SubjectRef struct {
 	Id   string `json:"id"`
 	Kind string `json:"kind"`
 	Name string `json:"name"`
+}
+
+// SubjectTree A flat graph. Nodes appear exactly once however many paths reach them, and every edge whose both ends are present is included, so the client can draw the connections without anything dangling.
+type SubjectTree struct {
+	Edges  []Relationship `json:"edges"`
+	Nodes  []Subject      `json:"nodes"`
+	RootId string         `json:"rootId"`
 }
 
 // ArchiveId defines model for ArchiveId.
@@ -466,6 +643,9 @@ type IfMatch = string
 
 // ItemId defines model for ItemId.
 type ItemId = string
+
+// SubjectId defines model for SubjectId.
+type SubjectId = string
 
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
@@ -560,6 +740,33 @@ type PutMemberJSONBody struct {
 	Role        Role    `json:"role"`
 }
 
+// ListSubjectsParams defines parameters for ListSubjects.
+type ListSubjectsParams struct {
+	// Kind Narrow to one kind, e.g. `person` or `pet`.
+	Kind *string `form:"kind,omitempty" json:"kind,omitempty"`
+}
+
+// DeleteSubjectParams defines parameters for DeleteSubject.
+type DeleteSubjectParams struct {
+	// IfMatch The `ETag` last seen. If the record has changed since, the write is refused with `412` rather than overwriting someone else's edit.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+}
+
+// PatchSubjectParams defines parameters for PatchSubject.
+type PatchSubjectParams struct {
+	// IfMatch The `ETag` last seen. If the record has changed since, the write is refused with `412` rather than overwriting someone else's edit.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+}
+
+// GetSubjectTreeParams defines parameters for GetSubjectTree.
+type GetSubjectTreeParams struct {
+	Depth     *int                           `form:"depth,omitempty" json:"depth,omitempty"`
+	Direction *GetSubjectTreeParamsDirection `form:"direction,omitempty" json:"direction,omitempty"`
+}
+
+// GetSubjectTreeParamsDirection defines parameters for GetSubjectTree.
+type GetSubjectTreeParamsDirection string
+
 // GetMeParams defines parameters for GetMe.
 type GetMeParams struct {
 	DisplayName *string `form:"displayName,omitempty" json:"displayName,omitempty"`
@@ -585,3 +792,12 @@ type CreateUploadUrlJSONRequestBody CreateUploadUrlJSONBody
 
 // PutMemberJSONRequestBody defines body for PutMember for application/json ContentType.
 type PutMemberJSONRequestBody PutMemberJSONBody
+
+// PutRelationshipJSONRequestBody defines body for PutRelationship for application/json ContentType.
+type PutRelationshipJSONRequestBody = RelationshipCreate
+
+// CreateSubjectJSONRequestBody defines body for CreateSubject for application/json ContentType.
+type CreateSubjectJSONRequestBody = SubjectCreate
+
+// PatchSubjectJSONRequestBody defines body for PatchSubject for application/json ContentType.
+type PatchSubjectJSONRequestBody = SubjectPatch

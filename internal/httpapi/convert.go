@@ -5,6 +5,7 @@ import (
 
 	"github.com/jfortner8/archive-api/internal/domain"
 	"github.com/jfortner8/archive-api/internal/domain/itemtypes"
+	"github.com/jfortner8/archive-api/internal/domain/subjecttypes"
 	"github.com/jfortner8/archive-api/internal/httpapi/gen"
 )
 
@@ -319,5 +320,78 @@ func toGenItemType(t *itemtypes.Type) gen.ItemType {
 		out.Attributes = ptr(attrs)
 	}
 
+	return out
+}
+
+func toGenSubject(s *domain.Subject, urls map[domain.SubjectID]string) gen.Subject {
+	aliases := s.Aliases
+	if aliases == nil {
+		aliases = []string{}
+	}
+
+	out := gen.Subject{
+		Id:              string(s.ID),
+		ArchiveId:       string(s.ArchiveID),
+		Kind:            s.Kind,
+		KindVersion:     s.KindVersion,
+		DisplayName:     s.DisplayName,
+		GivenNames:      optional(s.GivenNames),
+		FamilyName:      optional(s.FamilyName),
+		Aliases:         aliases,
+		Birth:           toGenDate(s.Birth),
+		BirthNormalized: toGenDateNormalized(s.BirthNorm),
+		Death:           toGenDate(s.Death),
+		DeathNormalized: toGenDateNormalized(s.DeathNorm),
+		Notes:           optional(s.Notes),
+		CoverItemId:     optional(string(s.CoverItemID)),
+		CreatedAt:       s.CreatedAt,
+		UpdatedAt:       s.UpdatedAt,
+	}
+	if len(s.Attributes) > 0 {
+		out.Attributes = &s.Attributes
+	}
+	if url, ok := urls[s.ID]; ok {
+		out.CoverUrl = ptr(url)
+	}
+	return out
+}
+
+func toGenRelationship(r *domain.Relationship) gen.Relationship {
+	return gen.Relationship{
+		Id:            string(r.ID),
+		Type:          gen.RelationshipType(r.Type),
+		FromSubjectId: string(r.FromID),
+		ToSubjectId:   string(r.ToID),
+		Start:         toGenDate(r.Start),
+		End:           toGenDate(r.End),
+		Notes:         optional(r.Notes),
+	}
+}
+
+func toGenSubjectKind(k *subjecttypes.Kind) gen.SubjectKind {
+	out := gen.SubjectKind{
+		Id:      k.ID,
+		Label:   k.Label,
+		Plural:  k.Plural,
+		Version: k.Version,
+		Icon:    optional(k.Icon),
+	}
+	if len(k.Attributes) > 0 {
+		attrs := make([]gen.ItemTypeAttribute, 0, len(k.Attributes))
+		for _, a := range k.Attributes {
+			attr := gen.ItemTypeAttribute{
+				Id:    a.ID,
+				Label: a.Label,
+				Type:  gen.ItemTypeAttributeType(a.Kind),
+				Min:   a.Min,
+				Max:   a.Max,
+			}
+			if len(a.Options) > 0 {
+				attr.Options = ptr(a.Options)
+			}
+			attrs = append(attrs, attr)
+		}
+		out.Attributes = ptr(attrs)
+	}
 	return out
 }

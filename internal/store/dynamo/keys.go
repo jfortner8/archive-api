@@ -183,3 +183,12 @@ func ArchiveIDFromPK(pk string) (domain.ArchiveID, error) {
 	}
 	return domain.ArchiveID(id), nil
 }
+
+// SubjectIDFromSK recovers a subject id from its sort key.
+func SubjectIDFromSK(sk string) (domain.SubjectID, error) {
+	id, ok := strings.CutPrefix(sk, subjectSK)
+	if !ok || id == "" {
+		return "", fmt.Errorf("sort key %q is not a subject", sk)
+	}
+	return domain.SubjectID(id), nil
+}

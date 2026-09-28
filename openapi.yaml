@@ -51,6 +51,7 @@ tags:
   - name: me
   - name: archives
   - name: items
+  - name: subjects
   - name: files
   - name: types
 
@@ -558,6 +559,263 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
 
+  /v1/subject-kinds:
+    get:
+      operationId: listSubjectKinds
+      tags: [types]
+      summary: The catalogue of subject kinds
+      description: >
+        Person, pet, and whatever an archive turns out to be about. Each kind
+        declares its own descriptive attributes, so a pet is never forced into
+        a person's shape.
+
+
+        Nothing declared here is read by the family tree. A subject's gender
+        is recorded and displayed; it never positions, orders, or constrains
+        anything in the graph.
+      responses:
+        "200":
+          description: Every known kind, ordered by id.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/SubjectKind" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/archives/{archiveId}/subjects:
+    parameters:
+      - $ref: "#/components/parameters/ArchiveId"
+    get:
+      operationId: listSubjects
+      tags: [subjects]
+      summary: Everyone and everything the archive is about
+      description: >
+        Deliberately unpaginated. An archive has tens or hundreds of people
+        and pets, and every surface that uses this - a People tab, a tag
+        picker, a family tree - wants the whole set at once.
+      parameters:
+        - name: kind
+          in: query
+          schema: { type: string }
+          description: Narrow to one kind, e.g. `person` or `pet`.
+      responses:
+        "200":
+          description: Subjects.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Subject" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createSubject
+      tags: [subjects]
+      summary: Add a person or an animal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubjectCreate" }
+      responses:
+        "201":
+          description: Created.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subject" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /v1/archives/{archiveId}/subjects/{subjectId}:
+    parameters:
+      - $ref: "#/components/parameters/ArchiveId"
+      - $ref: "#/components/parameters/SubjectId"
+    get:
+      operationId: getSubject
+      tags: [subjects]
+      summary: Get one subject
+      responses:
+        "200":
+          description: The subject.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subject" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: patchSubject
+      tags: [subjects]
+      summary: Update a subject
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubjectPatch" }
+      responses:
+        "200":
+          description: The updated subject.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subject" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    delete:
+      operationId: deleteSubject
+      tags: [subjects]
+      summary: Delete a subject and every relationship naming it
+      description: >
+        Edges touching the subject go with it. Leaving them would strand
+        references to something that no longer exists, and every tree walk
+        would then have to defend against a missing node on every hop.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+
+  /v1/archives/{archiveId}/subjects/{subjectId}/tree:
+    parameters:
+      - $ref: "#/components/parameters/ArchiveId"
+      - $ref: "#/components/parameters/SubjectId"
+    get:
+      operationId: getSubjectTree
+      tags: [subjects]
+      summary: The family tree around a subject
+      description: >
+        Returns a **flat graph** - a node list and an edge list - never nested
+        JSON. Nesting cannot represent a subject that appears more than once,
+        and that is ordinary rather than exotic: line-breeding puts the same
+        animal on both sides of a pedigree constantly, and cousin marriage
+        does the same in human genealogy. The client lays it out.
+
+
+        `depth` counts generations along parent edges only. Partners and
+        animals are attached to each subject reached, one hop, consuming no
+        depth and never traversed through - so asking for someone's
+        descendants never returns their dog's puppies. To see an animal's own
+        line, root the tree at the animal.
+      parameters:
+        - name: depth
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 10, default: 3 }
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [ancestors, descendants, both]
+            default: both
+      responses:
+        "200":
+          description: The graph around this subject.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubjectTree" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/archives/{archiveId}/relationships:
+    parameters:
+      - $ref: "#/components/parameters/ArchiveId"
+    get:
+      operationId: listRelationships
+      tags: [subjects]
+      summary: Every edge in the archive
+      responses:
+        "200":
+          description: Relationships.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Relationship" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: putRelationship
+      tags: [subjects]
+      summary: Record a relationship
+      description: >
+        Idempotent: an edge's identity is its endpoints and its type, so
+        recording the same fact twice records it once.
+
+
+        A `parent` edge requires both subjects to be the same kind, which is
+        what makes shared descendants between people and animals
+        unrepresentable rather than merely discouraged. `owner` is the one
+        edge that crosses kinds, and it goes from a person to an animal.
+
+
+        A `parent` edge that would make someone their own ancestor is refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RelationshipCreate" }
+      responses:
+        "200":
+          description: The relationship.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Relationship" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /v1/archives/{archiveId}/relationships/{relationshipId}:
+    parameters:
+      - $ref: "#/components/parameters/ArchiveId"
+      - name: relationshipId
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: deleteRelationship
+      tags: [subjects]
+      summary: Remove a relationship
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
 components:
   securitySchemes:
     apiKeyAuth:
@@ -590,6 +848,11 @@ components:
       schema: { type: string }
     ItemId:
       name: itemId
+      in: path
+      required: true
+      schema: { type: string }
+    SubjectId:
+      name: subjectId
       in: path
       required: true
       schema: { type: string }
@@ -972,10 +1235,10 @@ components:
         title: { type: string, minLength: 1, maxLength: 500 }
         date:
           allOf: [{ $ref: "#/components/schemas/ArchiveDate" }]
-          nullable: true
+          description: Send `null` to clear the date.
         location:
           allOf: [{ $ref: "#/components/schemas/ArchiveLocation" }]
-          nullable: true
+          description: Send `null` to clear the location.
         placeId: { type: string, nullable: true }
         notes: { type: string, nullable: true }
         tags:
@@ -1068,3 +1331,165 @@ components:
           items: { type: string }
         min: { type: number, format: double }
         max: { type: number, format: double }
+
+    Subject:
+      type: object
+      additionalProperties: false
+      required: [id, archiveId, kind, kindVersion, displayName, aliases, createdAt, updatedAt]
+      description: >
+        Whoever or whatever a record is about. People and pets are one entity
+        with a kind rather than two parallel ones - what they share is the
+        part that would otherwise multiply with every new kind: one tag list
+        on items, one filter, one index attribute.
+      properties:
+        id: { type: string }
+        archiveId: { type: string }
+        kind: { type: string }
+        kindVersion: { type: integer }
+        displayName:
+          type: string
+          description: >
+            What appears on a caption and a tree node. Separate from the name
+            parts, because an archive is full of subjects whose full name
+            nobody knows.
+        givenNames: { type: string }
+        familyName: { type: string }
+        aliases:
+          type: array
+          items: { type: string }
+        birth: { $ref: "#/components/schemas/ArchiveDate" }
+        birthNormalized: { $ref: "#/components/schemas/DateNormalized" }
+        death: { $ref: "#/components/schemas/ArchiveDate" }
+        deathNormalized: { $ref: "#/components/schemas/DateNormalized" }
+        notes: { type: string }
+        attributes:
+          type: object
+          additionalProperties: true
+          description: >
+            What this kind declares - a person's gender, a pet's species and
+            breed. Descriptive only; nothing here is read by the family tree.
+        coverItemId:
+          type: string
+          description: The item used as this subject's portrait.
+        coverUrl: { type: string, format: uri, readOnly: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    SubjectCreate:
+      type: object
+      additionalProperties: false
+      required: [kind, displayName]
+      properties:
+        kind: { type: string }
+        displayName: { type: string, minLength: 1, maxLength: 300 }
+        givenNames: { type: string }
+        familyName: { type: string }
+        aliases:
+          type: array
+          items: { type: string }
+        birth: { $ref: "#/components/schemas/ArchiveDate" }
+        death: { $ref: "#/components/schemas/ArchiveDate" }
+        notes: { type: string }
+        attributes:
+          type: object
+          additionalProperties: true
+        coverItemId: { type: string }
+
+    SubjectPatch:
+      type: object
+      additionalProperties: false
+      description: Absent fields are left alone; fields sent as `null` are cleared.
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 300 }
+        givenNames: { type: string, nullable: true }
+        familyName: { type: string, nullable: true }
+        aliases:
+          type: array
+          nullable: true
+          items: { type: string }
+        birth:
+          allOf: [{ $ref: "#/components/schemas/ArchiveDate" }]
+          description: Send `null` to clear the birth date.
+        death:
+          allOf: [{ $ref: "#/components/schemas/ArchiveDate" }]
+          description: Send `null` to clear the death date.
+        notes: { type: string, nullable: true }
+        attributes:
+          type: object
+          nullable: true
+          additionalProperties: true
+        coverItemId: { type: string, nullable: true }
+
+    SubjectKind:
+      type: object
+      additionalProperties: false
+      required: [id, label, plural, version]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        plural:
+          type: string
+          description: >
+            What a nav tab says. Declared rather than derived, because English
+            pluralisation is not a rule.
+        version: { type: integer }
+        icon: { type: string }
+        attributes:
+          type: array
+          items: { $ref: "#/components/schemas/ItemTypeAttribute" }
+
+    RelationshipType:
+      type: string
+      description: >
+        `parent` runs from parent to child and is the only edge that forms
+        descent. `partner` is symmetric and entirely independent of it -
+        people marry and have no children, and have children without marrying.
+        `owner` runs from a person to an animal. `littermate` is symmetric,
+        between animals.
+      enum: [parent, partner, owner, littermate]
+
+    Relationship:
+      type: object
+      additionalProperties: false
+      required: [id, type, fromSubjectId, toSubjectId]
+      properties:
+        id:
+          type: string
+          description: >
+            Derived from the endpoints and the type, so recording the same
+            fact twice records it once.
+        type: { $ref: "#/components/schemas/RelationshipType" }
+        fromSubjectId: { type: string }
+        toSubjectId: { type: string }
+        start: { $ref: "#/components/schemas/ArchiveDate" }
+        end: { $ref: "#/components/schemas/ArchiveDate" }
+        notes: { type: string }
+
+    RelationshipCreate:
+      type: object
+      additionalProperties: false
+      required: [type, fromSubjectId, toSubjectId]
+      properties:
+        type: { $ref: "#/components/schemas/RelationshipType" }
+        fromSubjectId: { type: string }
+        toSubjectId: { type: string }
+        start: { $ref: "#/components/schemas/ArchiveDate" }
+        end: { $ref: "#/components/schemas/ArchiveDate" }
+        notes: { type: string }
+
+    SubjectTree:
+      type: object
+      additionalProperties: false
+      required: [rootId, nodes, edges]
+      description: >
+        A flat graph. Nodes appear exactly once however many paths reach them,
+        and every edge whose both ends are present is included, so the client
+        can draw the connections without anything dangling.
+      properties:
+        rootId: { type: string }
+        nodes:
+          type: array
+          items: { $ref: "#/components/schemas/Subject" }
+        edges:
+          type: array
+          items: { $ref: "#/components/schemas/Relationship" }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/jfortner8/archive-api/internal/domain"
 	"github.com/jfortner8/archive-api/internal/domain/itemtypes"
+	"github.com/jfortner8/archive-api/internal/domain/subjecttypes"
 )
 
 // These run against DynamoDB Local (`make dev-up`). They are skipped when
@@ -56,7 +57,7 @@ func newTestStore(t *testing.T) *Store {
 		_, _ = client.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: &table})
 	})
 
-	return New(client, table, itemtypes.Default)
+	return New(client, table, itemtypes.Default, subjecttypes.Default)
 }
 
 // createTestTable mirrors infra/terraform/dynamodb.tf. The two definitions
