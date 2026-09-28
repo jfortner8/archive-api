@@ -47,3 +47,10 @@ crash.log
 
 # Generated API reference (make docs)
 docs/api.html
+
+# Bruno environments hold credentials. Marking a variable "secret" in Bruno
+# keeps its value out of the .bru file, but that is a checkbox someone has to
+# remember - and a non-secret variable is written into the file verbatim. So
+# the files are ignored outright and only .example versions are shared.
+bruno/environments/*.bru
+!bruno/environments/*.bru.example

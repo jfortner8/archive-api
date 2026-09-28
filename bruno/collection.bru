@@ -1,3 +1,16 @@
+auth {
+  mode: awsv4
+}
+
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken: {{awsSessionToken}}
+  service: lambda
+  region: {{awsRegion}}
+  profileName: {{awsProfile}}
+}
+
 headers {
   X-API-Key: {{apiKey}}
   X-User-Token: {{userToken}}
@@ -10,9 +23,27 @@ docs {
   as runtime variables, so nothing has to be pasted between them. Use the
   collection runner, or run folders in order.
 
+  ## Auth
+
+  Three independent layers, and every request needs all three - including
+  `/healthz`, which needs none of the application's own checks but still sits
+  behind the Function URL's IAM gate.
+
+  1. **AWS SigV4**, set on this collection. Production's Function URL is
+     `AWS_IAM`, so an unsigned request is rejected by AWS before any of this
+     API's code runs - you get a bare `Forbidden` with no JSON body, which is
+     how you tell it apart from this API's own errors.
+  2. **`X-API-Key`**, checked in Go.
+  3. **`X-User-Token`**, a Cognito access token. Deliberately not
+     `Authorization`, because SigV4 signing owns that header.
+
+  Locally there is no IAM gate, so the signature is ignored - but Bruno still
+  needs the variables to exist, which is why the local environment sets
+  throwaway values rather than leaving them blank.
+
   ## Before the first run
 
-  Pick the **local** environment, then start the API:
+  Pick an environment, then for local:
 
   ```
   make dev-up && make dev-setup && make run
@@ -20,30 +51,21 @@ docs {
 
   `apiKey` matches `API_KEY` in your `.env` (`dev-key` by default).
 
-  `userToken` is a Cognito **access** token, and it is the one thing you have
-  to fetch yourself, because this service never issues tokens - it only
-  verifies them. The frontend talks to Cognito; this API never does.
+  `userToken` is a Cognito access token, and it is the one thing this API
+  cannot give you - it only verifies tokens. See
+  `docs/getting-an-access-token.md`; the short version is to copy
+  `archive_access_token` out of the UI's cookies, or run `make token`.
 
-  ```
-  aws cognito-idp admin-initiate-auth \
-    --user-pool-id $COGNITO_USER_POOL_ID \
-    --client-id $COGNITO_APP_CLIENT_ID \
-    --auth-flow ADMIN_USER_PASSWORD_AUTH \
-    --auth-parameters USERNAME=test@example.com,PASSWORD='Temp1234!'
-  ```
+  Tokens last 12 hours. A run of `401`s that starts suddenly usually means
+  yours expired.
 
-  Copy `AuthenticationResult.AccessToken` into the environment's `userToken`.
-  It is a secret variable, so it stays out of the committed files. Tokens last
-  12 hours; a sudden run of 401s usually means yours expired.
+  ## Production
 
-  An **ID** token will be rejected - the verifier requires `token_use` to be
-  `access`.
+  Copy the four values out of `archives-ui/.env.local`, which already holds
+  working credentials for the IAM user allowed to invoke the function:
+  `ARCHIVE_API_URL`, `ARCHIVE_API_KEY`, `ARCHIVE_API_ACCESS_KEY_ID`,
+  `ARCHIVE_API_SECRET_ACCESS_KEY`.
 
-  ## The production environment
-
-  Production sits behind a Lambda Function URL with `AWS_IAM` auth, so every
-  request also needs a SigV4 signature. The environment sets Bruno's own AWS
-  auth for that; fill in credentials for the IAM user allowed to invoke the
-  function. Without them you get a bare `Forbidden` from AWS before any of
-  this API's own code runs.
+  Alternatively leave the key variables empty and set `awsProfile` to an AWS
+  CLI profile name, and Bruno will use that profile's credentials instead.
 }

@@ -1,6 +1,7 @@
 vars {
   ~baseUrl: https://REPLACE-ME.lambda-url.us-east-1.on.aws
   awsRegion: us-east-1
+  ~awsProfile: 
 }
 
 vars:secret [
@@ -9,12 +10,3 @@ vars:secret [
   awsAccessKeyId,
   awsSecretAccessKey
 ]
-
-auth:awsv4 {
-  accessKeyId: {{awsAccessKeyId}}
-  secretAccessKey: {{awsSecretAccessKey}}
-  sessionToken:
-  service: lambda
-  region: {{awsRegion}}
-  profileName:
-}
