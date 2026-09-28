@@ -1,0 +1,38 @@
+meta {
+  name: request upload url
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/items/{{itemId}}/upload-url
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "role": "photo",
+    "filename": "blue ridge scan.png",
+    "contentType": "image/png"
+  }
+}
+
+script:post-response {
+  bru.setVar("fileId", res.body.fileId);
+  bru.setVar("uploadUrl", res.body.uploadUrl);
+  bru.setVar("fileKey", res.body.key);
+}
+
+tests {
+  test("mints the file id before any bytes move", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.fileId).to.be.a("string");
+  });
+
+  test("the key never contains the caller's filename", function () {
+    // Traversal and same-name collisions both die with the filename.
+    expect(res.body.key).to.not.contain("blue ridge");
+    expect(res.body.key).to.contain(res.body.fileId);
+  });
+}

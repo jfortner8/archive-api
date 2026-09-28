@@ -1,0 +1,35 @@
+meta {
+  name: reject a person parenting a dog
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/relationships
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "type": "parent",
+    "fromSubjectId": "{{grandmotherId}}",
+    "toSubjectId": "{{dogId}}"
+  }
+}
+
+tests {
+  test("people and animals cannot share descendants", function () {
+    expect(res.getStatus()).to.equal(422);
+    expect(res.body.error.details[0].code).to.equal("kind_mismatch");
+  });
+}
+
+docs {
+  Deliberately fails, and this is the constraint made structural: a parent
+  edge requires both ends to be the same kind, so a shared descendant is not
+  discouraged - it cannot be expressed.
+
+  The affectionate version of this relationship still has a home; it is an
+  `owner` edge.
+}

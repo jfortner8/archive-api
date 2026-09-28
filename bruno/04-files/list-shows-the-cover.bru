@@ -1,0 +1,23 @@
+meta {
+  name: list shows the cover
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/items?limit=5
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("each card carries its cover URL", function () {
+    expect(res.getStatus()).to.equal(200);
+    const card = res.body.data.find(c => c.id === bru.getVar("itemId"));
+    expect(card.coverUrl, "no cover URL on the card").to.be.a("string");
+  });
+}
+
+docs {
+  The gallery case. One request returns every tile's thumbnail URL.
+}

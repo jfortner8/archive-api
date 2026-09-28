@@ -1,0 +1,37 @@
+meta {
+  name: get me
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/me?displayName=Bruno
+  body: none
+  auth: inherit
+}
+
+script:post-response {
+  // Provisions a personal archive on first call, so this is also the
+  // bootstrap step. Every later request needs the id.
+  bru.setVar("archiveId", res.body.defaultArchiveId);
+  bru.setVar("accountId", res.body.accountId);
+}
+
+tests {
+  test("identifies the caller and gives them an archive", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.accountId).to.be.a("string");
+    expect(res.body.defaultArchiveId).to.be.a("string");
+    expect(res.body.archives).to.have.length.of.at.least(1);
+  });
+}
+
+docs {
+  Run this first. This service is never told that someone signed up, so the
+  first time it sees a verified token from an account with no archive, it
+  makes one.
+
+  `displayName` is stored on the membership because the access token carries
+  only a Cognito `sub` - without it a members list would be a column of
+  UUIDs.
+}

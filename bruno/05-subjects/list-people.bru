@@ -1,0 +1,20 @@
+meta {
+  name: list people
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/subjects?kind=person
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("narrows to one kind", function () {
+    expect(res.getStatus()).to.equal(200);
+    res.body.data.forEach(function (s) {
+      expect(s.kind).to.equal("person");
+    });
+  });
+}

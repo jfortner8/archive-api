@@ -62,6 +62,17 @@ curl -H "X-User-Token: <access-token>" -H "X-API-Key: dev-key" \
   http://localhost:8080/items
 ```
 
+## Trying it out
+
+Two ways to read and exercise the API:
+
+- **`make docs`** renders `openapi.yaml` as a browsable HTML reference at
+  `docs/api.html` (generated, gitignored). `make docs-lint` fails if the spec
+  is not valid OpenAPI, which catches things codegen quietly tolerates.
+- **`bruno/`** is a [Bruno](https://usebruno.com) collection covering the whole
+  API as a runnable flow, including the requests that are supposed to fail.
+  See [bruno/README.md](bruno/README.md).
+
 ## API shape
 
 `openapi.yaml` is the full contract, and it is the **source**: the Go wire

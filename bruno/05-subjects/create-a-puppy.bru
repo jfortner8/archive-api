@@ -1,0 +1,29 @@
+meta {
+  name: create a puppy
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/subjects
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "kind": "pet",
+    "displayName": "Pip",
+    "attributes": { "species": "dog", "breed": "Collie" }
+  }
+}
+
+script:post-response {
+  bru.setVar("puppyId", res.body.id);
+}
+
+tests {
+  test("creates the pet", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}

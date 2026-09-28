@@ -1,0 +1,31 @@
+meta {
+  name: reject an unknown attribute
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/subjects
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "kind": "pet",
+    "displayName": "Nameless",
+    "attributes": { "favouriteSnack": "cheese" }
+  }
+}
+
+tests {
+  test("attributes are checked against the kind", function () {
+    expect(res.getStatus()).to.equal(422);
+    expect(res.body.error.details[0].code).to.equal("unknown_attribute");
+  });
+}
+
+docs {
+  Deliberately fails. `pet` declares no `favouriteSnack`, and an undeclared
+  attribute is rejected rather than stored where nothing will ever read it.
+}

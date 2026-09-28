@@ -1,0 +1,49 @@
+headers {
+  X-API-Key: {{apiKey}}
+  X-User-Token: {{userToken}}
+}
+
+docs {
+  # archive-api
+
+  Requests run top to bottom as a flow: each one stores the ids the next needs
+  as runtime variables, so nothing has to be pasted between them. Use the
+  collection runner, or run folders in order.
+
+  ## Before the first run
+
+  Pick the **local** environment, then start the API:
+
+  ```
+  make dev-up && make dev-setup && make run
+  ```
+
+  `apiKey` matches `API_KEY` in your `.env` (`dev-key` by default).
+
+  `userToken` is a Cognito **access** token, and it is the one thing you have
+  to fetch yourself, because this service never issues tokens - it only
+  verifies them. The frontend talks to Cognito; this API never does.
+
+  ```
+  aws cognito-idp admin-initiate-auth \
+    --user-pool-id $COGNITO_USER_POOL_ID \
+    --client-id $COGNITO_APP_CLIENT_ID \
+    --auth-flow ADMIN_USER_PASSWORD_AUTH \
+    --auth-parameters USERNAME=test@example.com,PASSWORD='Temp1234!'
+  ```
+
+  Copy `AuthenticationResult.AccessToken` into the environment's `userToken`.
+  It is a secret variable, so it stays out of the committed files. Tokens last
+  12 hours; a sudden run of 401s usually means yours expired.
+
+  An **ID** token will be rejected - the verifier requires `token_use` to be
+  `access`.
+
+  ## The production environment
+
+  Production sits behind a Lambda Function URL with `AWS_IAM` auth, so every
+  request also needs a SigV4 signature. The environment sets Bruno's own AWS
+  auth for that; fill in credentials for the IAM user allowed to invoke the
+  function. Without them you get a bare `Forbidden` from AWS before any of
+  this API's own code runs.
+}

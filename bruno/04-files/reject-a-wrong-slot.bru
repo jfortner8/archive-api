@@ -1,0 +1,32 @@
+meta {
+  name: reject a wrong slot
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/items/{{itemId}}/upload-url
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "role": "disc",
+    "filename": "wrong-slot.png",
+    "contentType": "image/png"
+  }
+}
+
+tests {
+  test("checks the slot before issuing a URL", function () {
+    expect(res.getStatus()).to.equal(422);
+    expect(res.body.error.details[0].code).to.equal("unknown_slot");
+  });
+}
+
+docs {
+  Deliberately fails. `photo` declares no `disc` slot - that belongs to `cd`.
+  Checking now is the difference between a rejected request and a 200 MB
+  upload you have already paid for.
+}

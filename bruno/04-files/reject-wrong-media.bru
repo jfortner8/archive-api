@@ -1,0 +1,26 @@
+meta {
+  name: reject wrong media
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/items/{{itemId}}/upload-url
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "role": "photo",
+    "filename": "not-an-image.m4a",
+    "contentType": "audio/mp4"
+  }
+}
+
+tests {
+  test("checks the media family too", function () {
+    expect(res.getStatus()).to.equal(422);
+    expect(res.body.error.details[0].code).to.equal("wrong_media_family");
+  });
+}

@@ -1,0 +1,31 @@
+meta {
+  name: clear the date
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/items/{{itemId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "date": null
+  }
+}
+
+tests {
+  test("an explicit null clears the field", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.date).to.equal(undefined);
+    expect(res.body.dateNormalized).to.equal(undefined);
+  });
+}
+
+docs {
+  The previous version of this API could not express this at all: an absent
+  field and a null one were the same thing, so a date once set could never be
+  removed.
+}

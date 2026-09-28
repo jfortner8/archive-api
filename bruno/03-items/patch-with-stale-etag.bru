@@ -1,0 +1,34 @@
+meta {
+  name: patch with stale etag
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/items/{{itemId}}
+  body: json
+  auth: inherit
+}
+
+headers {
+  If-Match: W/"1"
+}
+
+body:json {
+  {
+    "title": "This edit is based on stale data"
+  }
+}
+
+tests {
+  test("refuses an edit built on a version someone else replaced", function () {
+    expect(res.getStatus()).to.equal(412);
+    expect(res.body.error.code).to.equal("precondition_failed");
+  });
+}
+
+docs {
+  Deliberately fails. Version 1 is the one the create produced, and the patch
+  before this moved past it - so this is what a second person saving over your
+  change looks like from the server's side.
+}

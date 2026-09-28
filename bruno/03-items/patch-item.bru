@@ -1,0 +1,50 @@
+meta {
+  name: patch item
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/items/{{itemId}}
+  body: json
+  auth: inherit
+}
+
+headers {
+  If-Match: {{itemEtag}}
+}
+
+body:json {
+  {
+    "title": "Blue Ridge, morning fog (front)",
+    "tags": ["mountains", "morning", "1950s"]
+  }
+}
+
+script:post-response {
+  if (res.getStatus() === 200) {
+    bru.setVar("itemEtag", res.getHeader("etag"));
+  }
+}
+
+tests {
+  test("applies the change", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.title).to.contain("(front)");
+  });
+
+  test("the date was left alone", function () {
+    // Absent means "leave alone"; only an explicit null clears.
+    expect(res.body.date).to.not.equal(null);
+  });
+
+  test("the ETag moved on", function () {
+    expect(res.getHeader("etag")).to.not.equal(bru.getVar("itemEtag"));
+  });
+}
+
+docs {
+  Sends `If-Match` with the ETag from the create. Run it twice without
+  re-running the create and the second attempt gets a `412` - the point of
+  the header.
+}

@@ -44,3 +44,6 @@ go.work.sum
 *.tfvars
 !*.tfvars.example
 crash.log
+
+# Generated API reference (make docs)
+docs/api.html

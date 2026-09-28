@@ -1,0 +1,32 @@
+meta {
+  name: reject a cycle
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/relationships
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "type": "parent",
+    "fromSubjectId": "{{motherId}}",
+    "toSubjectId": "{{grandmotherId}}"
+  }
+}
+
+tests {
+  test("nobody can be their own ancestor", function () {
+    expect(res.getStatus()).to.equal(422);
+    expect(res.body.error.details[0].code).to.equal("cycle");
+  });
+}
+
+docs {
+  Deliberately fails. Without this check one mistaken edit makes a loop that
+  hangs tree rendering, and the cause is invisible edge by edge - every
+  individual relationship looks fine.
+}

@@ -1,0 +1,31 @@
+meta {
+  name: reject an unknown field
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/items
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "typeId": "photo",
+    "titel": "A typo, not a title"
+  }
+}
+
+tests {
+  test("says which field it did not recognise", function () {
+    expect(res.getStatus()).to.equal(400);
+    expect(res.body.error.message).to.contain("titel");
+  });
+}
+
+docs {
+  Deliberately fails. A misspelled field is reported rather than silently
+  discarded, which is why every request schema declares
+  `additionalProperties: false`.
+}

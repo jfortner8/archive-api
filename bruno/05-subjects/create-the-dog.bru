@@ -1,0 +1,37 @@
+meta {
+  name: create the dog
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/subjects
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "kind": "pet",
+    "displayName": "Rufus",
+    "birth": { "kind": "circa", "date": "1958" },
+    "attributes": { "species": "dog", "breed": "Collie", "sex": "male" }
+  }
+}
+
+script:post-response {
+  bru.setVar("dogId", res.body.id);
+}
+
+tests {
+  test("a pet is the same entity with a different kind", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.kind).to.equal("pet");
+    expect(res.body.attributes.breed).to.equal("Collie");
+  });
+}
+
+docs {
+  A pet declares its own attributes - species, breed, sex - so it is never
+  forced into a person's shape. None of them is read by the family tree.
+}

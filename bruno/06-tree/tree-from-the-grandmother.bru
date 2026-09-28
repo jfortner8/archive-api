@@ -1,0 +1,40 @@
+meta {
+  name: tree from the grandmother
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/subjects/{{grandmotherId}}/tree?depth=3&direction=descendants
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("returns a flat graph, not nested JSON", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.nodes).to.be.an("array");
+    expect(res.body.edges).to.be.an("array");
+  });
+
+  test("the daughter and her dog are both there", function () {
+    const ids = res.body.nodes.map(n => n.id);
+    expect(ids).to.include(bru.getVar("motherId"));
+    expect(ids).to.include(bru.getVar("dogId"));
+  });
+
+  test("the dog's own puppy is not", function () {
+    // Ownership is one hop and consumes no depth. Following it recursively
+    // would graft a pedigree into a family tree and make "depth" mean two
+    // different things in one response.
+    const ids = res.body.nodes.map(n => n.id);
+    expect(ids).to.not.include(bru.getVar("puppyId"));
+  });
+}
+
+docs {
+  A flat node list and edge list. Nesting cannot represent a subject reached
+  by more than one path, and that is ordinary - line-breeding puts the same
+  animal on both sides of a pedigree, and cousin marriage does the same in
+  human genealogy.
+}

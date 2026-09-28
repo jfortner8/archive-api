@@ -1,0 +1,19 @@
+meta {
+  name: subject kinds
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/v1/subject-kinds
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("serves person and pet", function () {
+    expect(res.getStatus()).to.equal(200);
+    const ids = res.body.data.map(k => k.id);
+    expect(ids).to.include.members(["person", "pet"]);
+  });
+}

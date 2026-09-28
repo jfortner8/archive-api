@@ -1,0 +1,32 @@
+meta {
+  name: grandmother is mother's parent
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/relationships
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "type": "parent",
+    "fromSubjectId": "{{grandmotherId}}",
+    "toSubjectId": "{{motherId}}"
+  }
+}
+
+tests {
+  test("records the edge", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.type).to.equal("parent");
+  });
+}
+
+docs {
+  Parent edges are the only primitive. Siblings, half-siblings and co-parents
+  are all derived from them, which is why remarriage and one-known-parent need
+  no special handling.
+}

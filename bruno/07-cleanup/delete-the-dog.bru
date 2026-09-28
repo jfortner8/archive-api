@@ -1,0 +1,22 @@
+meta {
+  name: delete the dog
+  type: http
+  seq: 1
+}
+
+delete {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/subjects/{{dogId}}
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("deletes the subject", function () {
+    expect(res.getStatus()).to.equal(204);
+  });
+}
+
+docs {
+  Takes every edge naming the dog with it, so nothing is left pointing at
+  something that no longer exists.
+}

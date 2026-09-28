@@ -1,0 +1,23 @@
+meta {
+  name: healthz
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/healthz
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("is up", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.status).to.equal("ok");
+  });
+}
+
+docs {
+  The only route that needs none of the three auth layers, so it is the
+  fastest way to tell "the server is down" from "my token is wrong".
+}

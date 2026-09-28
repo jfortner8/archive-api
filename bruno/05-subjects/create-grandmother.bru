@@ -1,0 +1,38 @@
+meta {
+  name: create grandmother
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/subjects
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "kind": "person",
+    "displayName": "Ruth Fortner",
+    "givenNames": "Ruth Eleanor",
+    "familyName": "Fortner",
+    "birth": { "kind": "circa", "date": "1912" },
+    "attributes": { "occupation": "Schoolteacher" }
+  }
+}
+
+script:post-response {
+  bru.setVar("grandmotherId", res.body.id);
+}
+
+tests {
+  test("creates the person", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.kind).to.equal("person");
+  });
+
+  test("genealogy dates get the same treatment as item dates", function () {
+    expect(res.body.birth.unit).to.equal("5-years");
+    expect(res.body.birthNormalized.dateSort).to.be.a("string");
+  });
+}

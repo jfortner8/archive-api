@@ -1,4 +1,4 @@
-.PHONY: build run test test-integration lint tidy generate dev-up dev-down dev-setup
+.PHONY: build run test test-integration lint tidy generate docs docs-lint dev-up dev-down dev-setup
 
 build:
 	go build -o bin/api ./cmd/api
@@ -46,6 +46,20 @@ generate:
 	$(OAPI_CODEGEN) -config codegen.yaml openapi.yaml
 	gofmt -w internal/httpapi/gen
 
+# Renders openapi.yaml as a self-contained HTML reference and leaves it at
+# docs/api.html, which is gitignored - it is generated, and committing it
+# would be a second copy of the spec to keep in step with the first.
+#
+# Needs Node only for this; nothing else in the project does.
+docs:
+	npx --yes @redocly/cli@1 build-docs openapi.yaml -o docs/api.html
+	@echo "open docs/api.html"
+
+# Fails if the spec is not valid OpenAPI. Worth having separately from docs,
+# because codegen accepts some things a reader would not.
+docs-lint:
+	npx --yes @redocly/cli@1 lint openapi.yaml
+
 tidy:
 	go mod tidy
 
@@ -60,11 +74,27 @@ dev-down:
 # dev-up. Safe to run more than once. Doesn't cover Cognito - there's no
 # local emulator for it, so local dev points at the same real User Pool
 # production uses; see the README's "Local dev and Cognito" section.
+# Mirrors infra/terraform/dynamodb.tf. The two definitions are separate, so a
+# change to the real key schema has to be made in both - the store's
+# integration tests build the same schema a third time and will notice if this
+# one drifts.
+#
+# The GSI projects ALL here rather than production's INCLUDE list: locally the
+# extra bytes cost nothing, and it keeps the projection list in one place
+# (Terraform) instead of three.
 dev-setup:
 	docker compose --profile tools run --rm awscli s3 mb s3://archive-dev --endpoint-url http://minio:9000 || true
 	docker compose --profile tools run --rm awscli dynamodb create-table \
-		--table-name archive-items-dev \
-		--attribute-definitions AttributeName=id,AttributeType=S \
-		--key-schema AttributeName=id,KeyType=HASH \
+		--table-name archive-dev \
+		--attribute-definitions \
+			AttributeName=pk,AttributeType=S \
+			AttributeName=sk,AttributeType=S \
+			AttributeName=gsi1pk,AttributeType=S \
+			AttributeName=gsi1sk,AttributeType=S \
+		--key-schema \
+			AttributeName=pk,KeyType=HASH \
+			AttributeName=sk,KeyType=RANGE \
+		--global-secondary-indexes \
+			'[{"IndexName":"gsi1","KeySchema":[{"AttributeName":"gsi1pk","KeyType":"HASH"},{"AttributeName":"gsi1sk","KeyType":"RANGE"}],"Projection":{"ProjectionType":"ALL"}}]' \
 		--billing-mode PAY_PER_REQUEST \
 		--endpoint-url http://dynamodb-local:8000 || true

@@ -1,0 +1,33 @@
+meta {
+  name: tag the photo
+  type: http
+  seq: 7
+}
+
+patch {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/items/{{itemId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "subjects": [
+      { "id": "{{grandmotherId}}", "kind": "person", "name": "Ruth Fortner" },
+      { "id": "{{dogId}}", "kind": "pet", "name": "Rufus" }
+    ]
+  }
+}
+
+tests {
+  test("a person and a pet share one tag list", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.subjects).to.have.lengthOf(2);
+  });
+}
+
+docs {
+  One `subjects` array rather than separate people and animal lists. That is
+  what stops the filter grammar and the index multiplying with every new kind
+  of subject.
+}

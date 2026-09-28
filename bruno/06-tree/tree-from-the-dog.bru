@@ -1,0 +1,30 @@
+meta {
+  name: tree from the dog
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/subjects/{{dogId}}/tree?depth=2&direction=descendants
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("rooting at the animal shows its own line", function () {
+    expect(res.getStatus()).to.equal(200);
+    const ids = res.body.nodes.map(n => n.id);
+    expect(ids).to.include(bru.getVar("puppyId"));
+  });
+
+  test("and who it belonged to", function () {
+    const ids = res.body.nodes.map(n => n.id);
+    expect(ids).to.include(bru.getVar("motherId"));
+  });
+}
+
+docs {
+  The other side of the one-hop rule: the puppy that was correctly absent
+  from the grandmother's tree is here, because this tree is rooted at its
+  parent.
+}

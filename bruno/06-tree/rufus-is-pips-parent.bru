@@ -1,0 +1,25 @@
+meta {
+  name: Rufus is Pip's parent
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/relationships
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "type": "parent",
+    "fromSubjectId": "{{dogId}}",
+    "toSubjectId": "{{puppyId}}"
+  }
+}
+
+tests {
+  test("pedigrees use the same edge type", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}

@@ -1,0 +1,66 @@
+meta {
+  name: create photo
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/items
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "typeId": "photo",
+    "title": "Blue Ridge, morning fog",
+    "date": { "kind": "circa", "date": "1952" },
+    "location": {
+      "label": "Asheville, NC",
+      "lat": 35.5951,
+      "lon": -82.5515,
+      "confidence": "city"
+    },
+    "notes": "Found in the shoebox under the stairs.",
+    "tags": ["mountains", "morning"]
+  }
+}
+
+script:post-response {
+  bru.setVar("itemId", res.body.id);
+  bru.setVar("itemEtag", res.getHeader("etag"));
+}
+
+tests {
+  test("creates the item in one request", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.id).to.be.a("string");
+  });
+
+  test("infers the circa width and writes it back", function () {
+    // "circa 1952" with no unit: one step wider than a bare year, because an
+    // exact year already spans the whole year.
+    expect(res.body.date.unit).to.equal("5-years");
+  });
+
+  test("derives the sortable date fields", function () {
+    expect(res.body.dateNormalized.dateSort).to.be.a("string");
+    expect(res.body.dateNormalized.dateBandTier).to.equal("5-years");
+  });
+
+  test("derives the location radius", function () {
+    expect(res.body.location.radiusMeters).to.equal(10000);
+  });
+
+  test("carries an ETag", function () {
+    expect(res.getHeader("etag")).to.be.a("string");
+  });
+}
+
+docs {
+  Takes the whole item rather than just a type and a title, so one form
+  submission is one request.
+
+  Note what comes back derived: the circa width, the sort key and bounds, and
+  the location's real-world radius in metres. Clients never compute these.
+}

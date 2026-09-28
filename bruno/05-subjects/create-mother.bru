@@ -1,0 +1,29 @@
+meta {
+  name: create mother
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/subjects
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "kind": "person",
+    "displayName": "Alice Fortner",
+    "birth": { "kind": "exact", "date": "1946-03" }
+  }
+}
+
+script:post-response {
+  bru.setVar("motherId", res.body.id);
+}
+
+tests {
+  test("creates the person", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
