@@ -4,10 +4,19 @@ meta {
   seq: 4
 }
 
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken:
+  service: lambda
+  region: {{awsRegion}}
+  profileName:
+}
+
 patch {
   url: {{baseUrl}}/v1/archives/{{archiveId}}/items/{{itemId}}
   body: json
-  auth: inherit
+  auth: awsv4
 }
 
 headers {

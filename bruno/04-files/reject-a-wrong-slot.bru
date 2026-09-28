@@ -4,10 +4,19 @@ meta {
   seq: 2
 }
 
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken:
+  service: lambda
+  region: {{awsRegion}}
+  profileName:
+}
+
 post {
   url: {{baseUrl}}/v1/archives/{{archiveId}}/items/{{itemId}}/upload-url
   body: json
-  auth: inherit
+  auth: awsv4
 }
 
 body:json {
