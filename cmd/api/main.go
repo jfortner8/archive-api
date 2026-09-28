@@ -6,12 +6,13 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/jfortner8/archive-api/internal/api"
 	"github.com/jfortner8/archive-api/internal/authtoken"
 	"github.com/jfortner8/archive-api/internal/awsclients"
 	"github.com/jfortner8/archive-api/internal/config"
-	"github.com/jfortner8/archive-api/internal/legacystore"
+	"github.com/jfortner8/archive-api/internal/domain/itemtypes"
+	"github.com/jfortner8/archive-api/internal/httpapi"
 	"github.com/jfortner8/archive-api/internal/storage"
+	"github.com/jfortner8/archive-api/internal/store"
 )
 
 func main() {
@@ -32,10 +33,11 @@ func main() {
 		log.Fatalf("cognito verifier: %v", err)
 	}
 
-	server := &api.Server{
-		Items:    legacystore.NewItemStore(clients.Dynamo, cfg.DynamoTable),
+	server := &httpapi.Server{
+		Store:    store.New(clients.Dynamo, cfg.DynamoTable, itemtypes.Default),
 		Files:    storage.NewFileStore(clients.S3Presign, cfg.S3Bucket),
 		Verifier: verifier,
+		Types:    itemtypes.Default,
 		APIKey:   cfg.APIKey,
 	}
 

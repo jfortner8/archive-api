@@ -42,6 +42,18 @@ jobs:
       - run: go test ./... -v
       - run: go build ./...
 
+      # openapi.yaml is the source the wire types are generated from. If
+      # regenerating changes anything, the spec and the code disagree - which
+      # is how a spec quietly becomes a lie about the API the frontend is
+      # written against.
+      - name: Check the generated types match the spec
+        run: |
+          make generate
+          if ! git diff --exit-code -- internal/httpapi/gen; then
+            echo "::error::openapi.yaml and the generated types disagree. Run 'make generate' and commit the result." >&2
+            exit 1
+          fi
+
   # Deploys to the real Lambda function on every push to main (i.e. every
   # merged PR), using credentials for archive-api-ci-deploy - an IAM user
   # scoped to only updating this one function's code, nothing else.

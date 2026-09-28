@@ -42,11 +42,6 @@ func TestValidateRejects(t *testing.T) {
 			wantErr: "after date.end",
 		},
 		{
-			name:    "circa with no unit",
-			date:    ArchiveDate{Kind: DateCirca, Date: "1952"},
-			wantErr: "not a known circa unit",
-		},
-		{
 			name:    "circa with a misspelled unit",
 			date:    ArchiveDate{Kind: DateCirca, Date: "1952", Unit: "decades"},
 			wantErr: "not a known circa unit",
@@ -307,5 +302,88 @@ func TestWireShapeRoundTrips(t *testing.T) {
 		if got, expect := string(k), []string{"exact", "range", "circa"}[i]; got != expect {
 			t.Errorf("kind = %q, want %q", got, expect)
 		}
+	}
+}
+
+// TestCircaWithoutAUnit covers writing a date the way people actually write
+// it: "circa 1960", "circa May 1975", with no width stated.
+func TestCircaWithoutAUnit(t *testing.T) {
+	tests := []struct {
+		name     string
+		date     string
+		wantUnit CircaUnit
+	}{
+		// A bare year has to mean something looser than the year itself -
+		// an exact "1960" already spans all of 1960, so inferring a
+		// one-year width would make "circa" convey nothing.
+		{name: "circa a year", date: "1960", wantUnit: UnitFiveYears},
+		{name: "circa a month", date: "1975-05", wantUnit: UnitThreeMonths},
+		{name: "circa a day", date: "1960-05-15", wantUnit: UnitMonth},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := ArchiveDate{Kind: DateCirca, Date: tt.date}
+
+			if err := d.Validate(); err != nil {
+				t.Fatalf("a circa date with no unit was rejected: %v", err)
+			}
+			if got := d.ResolvedUnit(); got != tt.wantUnit {
+				t.Errorf("inferred unit = %q, want %q", got, tt.wantUnit)
+			}
+
+			// Resolve pins the width onto the record, so a later change to
+			// the inference rule cannot retroactively alter what it means.
+			d.Resolve()
+			if d.Unit != tt.wantUnit {
+				t.Errorf("after Resolve, unit = %q, want %q", d.Unit, tt.wantUnit)
+			}
+
+			n, err := d.Normalize()
+			if err != nil {
+				t.Fatalf("normalize: %v", err)
+			}
+			if n.Sort == "" || n.Earliest == n.Latest {
+				t.Error("an inferred circa produced no span")
+			}
+		})
+	}
+}
+
+// TestCircaIsLooserThanExact is the property the inference exists to protect.
+func TestCircaIsLooserThanExact(t *testing.T) {
+	exact, err := (&ArchiveDate{Kind: DateExact, Date: "1960"}).Normalize()
+	if err != nil {
+		t.Fatalf("normalize exact: %v", err)
+	}
+	circa, err := (&ArchiveDate{Kind: DateCirca, Date: "1960"}).Normalize()
+	if err != nil {
+		t.Fatalf("normalize circa: %v", err)
+	}
+
+	if !(circa.Earliest < exact.Earliest) || !(circa.Latest > exact.Latest) {
+		t.Errorf("circa 1960 (%s..%s) is not wider than exact 1960 (%s..%s)",
+			circa.Earliest, circa.Latest, exact.Earliest, exact.Latest)
+	}
+}
+
+// TestExplicitUnitWins confirms inference only ever fills a gap.
+func TestExplicitUnitWins(t *testing.T) {
+	d := ArchiveDate{Kind: DateCirca, Date: "1960", Unit: UnitCentury}
+	if got := d.ResolvedUnit(); got != UnitCentury {
+		t.Errorf("resolved unit = %q, want the stated %q", got, UnitCentury)
+	}
+	d.Resolve()
+	if d.Unit != UnitCentury {
+		t.Errorf("Resolve overwrote a stated unit with %q", d.Unit)
+	}
+}
+
+// A unit that was stated but misspelled is still rejected - inference must
+// not become a way for typos to pass silently.
+func TestMisspelledUnitIsStillRejected(t *testing.T) {
+	d := ArchiveDate{Kind: DateCirca, Date: "1960", Unit: "decades"}
+	if err := d.Validate(); err == nil {
+		t.Error("a misspelled unit was accepted")
 	}
 }

@@ -64,37 +64,73 @@ curl -H "X-User-Token: <access-token>" -H "X-API-Key: dev-key" \
 
 ## API shape
 
-Every route below except `/healthz` requires an `X-API-Key` header
-matching the `API_KEY` config value, and (in production) a valid
-AWS SigV4 signature - see [Auth](#auth) below.
+`openapi.yaml` is the full contract, and it is the **source**: the Go wire
+types are generated from it with `make generate`, and CI fails if the two
+disagree. Change the spec first.
 
-- `POST /items` — create an item (`{"type": "photo", "title": "..."}`).
-  `date`/`location`/`notes`/`tags`/`people` aren't set here - a capture
-  flow often knows the file before it knows the details, so those are
-  added afterward via `PATCH`.
-- `GET /items` — list items
-- `GET /items/{id}` — get one item
-- `PATCH /items/{id}` — partial update: only the fields present in the
-  body are changed. Any of `title`, `date`, `location`, `notes`, `tags`,
-  `people` -  e.g. `{"tags": ["family", "1952"]}` leaves everything else
-  as-is. `date` is `{"kind": "exact"|"range"|"circa", ...}` (see
-  `store.ArchiveDate`); `location` is `{"label": "...", "lat": ..., "lon": ..., "confidence": "..."}`.
-- `POST /items/{id}/upload-url` — get a presigned S3 URL to upload a file
-  (`{"role": "front", "filename": "scan.jpg", "contentType": "image/jpeg"}`,
-  `order` optional for multi-page documents); the frontend `PUT`s the
-  file bytes directly to the returned URL
-- `POST /items/{id}/files` — record that an upload finished, attaching it
-  to the item (`{"role": "front", "key": "...", "contentType": "...", "sizeBytes": 123}`).
-  The response includes the attached file's generated `id`.
-- `GET /items/{id}/files/{fileID}/download-url` — get a presigned URL to
-  download a specific file, addressed by its own `id` (not `role` - an
-  item can have several files sharing a role, e.g. multiple voice memos
-  or document pages)
+Everything except `/healthz` lives under `/v1` and is scoped to an archive.
 
-Every item is scoped to the account that created it (`accountId` in the
-response body, a Cognito user's `sub`) - `GET /items` only ever returns
-your own items, and any other endpoint given another account's item `id`
-responds `404` exactly as if it didn't exist.
+```
+GET    /healthz                                        no auth of any kind
+GET    /v1/me                                          who am I, which archives, what role
+GET    /v1/item-types                                  the datatype catalogue (see below)
+
+GET    /v1/archives                                    POST to create
+GET    /v1/archives/{aid}                              /members, PUT|DELETE {accountId}
+
+GET    /v1/archives/{aid}/items?limit=&cursor=&sort=   newest first by default
+POST   /v1/archives/{aid}/items                        the whole item, not just a title
+GET|PATCH|DELETE /v1/archives/{aid}/items/{id}
+
+POST   /v1/archives/{aid}/items/{id}/upload-url        mints the file id, checks the slot
+POST   /v1/archives/{aid}/items/{id}/files             confirm an upload finished
+PUT    /v1/archives/{aid}/items/{id}/files/order       full ordered list of file ids
+DELETE /v1/archives/{aid}/items/{id}/files/{fileId}
+```
+
+A few things worth knowing before reading the spec:
+
+- **Download URLs come back inline.** Every file on an item, and every card's
+  cover in a list, carries a presigned `url`. There is no per-file round trip;
+  presigning is local arithmetic, not a network call.
+- **Collections are wrapped**: `{"data": [...], "page": {...}}`, never a bare
+  array, so a cursor and a page size have somewhere to live.
+- **Errors are objects**: `{"error": {"code", "message", "requestId",
+  "details"}}` with a closed set of codes, so a client can branch on `code`
+  rather than matching on prose.
+- **Items carry an `ETag`.** Send it back as `If-Match` on `PATCH` or `DELETE`
+  and you get a `412` if someone else edited in between, instead of silently
+  overwriting them.
+- **A field sent as `null` in a `PATCH` is cleared**; an absent field is left
+  alone. (The previous version could not express the difference.)
+- **A non-member gets `404`, not `403`**, so archive ids cannot be probed. A
+  member with too low a role gets `403`.
+- **Unknown request fields and unknown query parameters are rejected**, rather
+  than silently ignored.
+
+### Datatypes
+
+An item's type - photo, two-sided photo, document, CD, stack - is declared in
+a YAML manifest under `internal/domain/itemtypes/manifests/`, not in code.
+Each type declares its slots (a CD has a case front, a disc, booklet pages,
+tracks), what media each accepts, and which viewer primitives render them.
+Slots are optional by default, because a CD with only an MP3 is still a CD.
+
+`GET /v1/item-types` serves the catalogue so the UI builds its forms and
+viewers from it rather than hard-coding a list. Adding a datatype is a
+manifest entry and usually no code at all - see
+[docs/adding-an-item-type.md](docs/adding-an-item-type.md).
+
+### Dates
+
+Dates accept partial ISO (`1952`, `1952-06`, `1952-06-15`), and a bare year
+means the whole year. `circa` does not need a width: write `{"kind":"circa",
+"date":"1960"}` and the server infers one step wider than the precision you
+wrote, then stores it so the record says what it means forever.
+
+The server also returns `dateNormalized` - a sort key, earliest/latest bounds,
+a precision and a band tier - so clients never parse dates and ordering is a
+guarantee rather than something each client recomputes.
 
 ## Auth
 
@@ -110,7 +146,7 @@ by anyone who finds the URL:
    IAM credential and signs each request - e.g. via the `aws4fetch` npm
    package - before forwarding it here.
 2. **`X-API-Key` header**, checked in the Go code itself
-   (`internal/api/handlers.go`), independent of the IAM layer above.
+   (`internal/httpapi/middleware.go`), independent of the IAM layer above.
 3. **`X-User-Token` header**, a Cognito access token verified against the
    User Pool's published JWKS (`internal/authtoken`) - no secret is
    shared with archives-ui, since Cognito signs tokens asymmetrically.

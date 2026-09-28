@@ -1,4 +1,4 @@
-.PHONY: build run test test-integration lint tidy dev-up dev-down dev-setup
+.PHONY: build run test test-integration lint tidy generate dev-up dev-down dev-setup
 
 build:
 	go build -o bin/api ./cmd/api
@@ -34,6 +34,17 @@ test-integration:
 
 lint:
 	go vet ./...
+
+# Regenerates the Go request/response types from openapi.yaml.
+#
+# The spec is the source, not a description of the code: change the spec
+# first, run this, then make the handlers satisfy the new types. CI runs the
+# same command and fails if it produces a diff, so the two cannot drift.
+OAPI_CODEGEN := go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1
+
+generate:
+	$(OAPI_CODEGEN) -config codegen.yaml openapi.yaml
+	gofmt -w internal/httpapi/gen
 
 tidy:
 	go mod tidy

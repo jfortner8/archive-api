@@ -1,33 +1,46 @@
 openapi: 3.0.3
+
 info:
   title: archive-api
+  version: "2.0.0"
   description: >
-    Go backend for archive-ui. Stores item metadata in DynamoDB and files
-    (photos, PDFs, etc.) in S3, accessed via presigned URLs so files never
-    pass through this service's own request handling.
+    Backend for archives-ui. Item metadata lives in DynamoDB; files
+    (photographs, PDFs, audio) live in S3 and are reached through presigned
+    URLs, so bytes never pass through this service.
 
 
-    Every route except `/healthz` requires **both** security schemes below
-    at once: an `X-API-Key` header (proves the caller is this app's own
-    trusted proxy) and a Cognito access token (proves which account is
-    calling). A third layer, AWS IAM SigV4 on the Lambda Function URL
-    itself, is enforced by AWS before either of the above is even checked
-    and has no OpenAPI representation.
+    **This file is the source, not a description.** The Go request and
+    response types are generated from it (`make generate`), and CI fails if
+    regenerating produces a diff. Edit the spec first, then make the code
+    satisfy it.
 
 
-    Every item is scoped to the account that created it. `GET /items` only
-    ever returns the caller's own items, and any endpoint given another
-    account's item `id` responds `404` exactly as if it didn't exist.
-  version: "1.0.0"
+    ## Authorization
+
+    Every route except `/healthz` requires three independent things at once:
+    AWS SigV4 on the Lambda Function URL (enforced by AWS before this code
+    runs, and not representable in OpenAPI), an `X-API-Key` header, and a
+    Cognito access token in `X-User-Token`. The first two answer "is this our own proxy
+    calling"; the third answers "which person is this".
+
+
+    Within an archive, what a caller may do comes from their membership role,
+    not from any token claim. A caller who is not a member receives `404`
+    rather than `403`, so archive ids cannot be probed. A member whose role is
+    insufficient receives `403`, since they already know the archive exists.
+
+
+    ## Concurrency
+
+    Item responses carry an `ETag`. Send it back as `If-Match` on `PATCH` and
+    `DELETE` to be told (`412`) that someone else edited the item, rather than
+    silently overwriting their change.
 
 servers:
-  - url: https://{functionUrl}
-    description: Production (AWS Lambda Function URL)
-    variables:
-      functionUrl:
-        default: b74lj4orus5md3pnga2k76lpt40msbwi.lambda-url.us-east-1.on.aws
-  - url: http://localhost:8080
-    description: Local development (make run)
+  - url: /
+    description: >
+      Relative, because callers reach this service through a signing proxy
+      rather than directly. Point the proxy at the Lambda Function URL.
 
 security:
   - apiKeyAuth: []
@@ -35,311 +48,515 @@ security:
 
 tags:
   - name: health
-    description: Uptime checks - requires no auth of any kind.
+  - name: me
+  - name: archives
   - name: items
-    description: Item metadata, scoped to the caller's account.
   - name: files
-    description: Presigned S3 upload/download URLs for files attached to an item.
+  - name: types
 
 paths:
   /healthz:
     get:
-      tags: [health]
       operationId: healthCheck
-      summary: Uptime check
+      tags: [health]
+      summary: Liveness probe
       security: []
       responses:
         "200":
-          description: OK
+          description: The service is up.
           content:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
+                required: [status]
                 properties:
-                  status:
-                    type: string
-                    example: ok
+                  status: { type: string, example: ok }
 
-  /items:
-    post:
-      tags: [items]
-      operationId: createItem
-      summary: Create an item
+  /v1/me:
+    get:
+      operationId: getMe
+      tags: [me]
+      summary: Who is calling, and which archives they belong to
       description: >
-        `date`/`location`/`notes`/`tags`/`people` aren't set here - a
-        capture flow often knows the file before it knows the details, so
-        those are added afterward via PATCH.
+        The bootstrap call. On a caller's first ever request this creates a
+        personal archive for them, so a newly signed-up account is never
+        stranded without one - this service is never told about a signup, it
+        simply provisions on first sight.
+
+
+        `displayName` is stored on the caller's memberships, because this
+        service never learns a name otherwise: it verifies Cognito *access*
+        tokens, whose claims carry only `sub`, `username`, `client_id` and
+        `exp`. An email would be in the ID token, which is deliberately
+        rejected. Without this, a members list would be a column of UUIDs.
+      parameters:
+        - name: displayName
+          in: query
+          required: false
+          schema: { type: string, maxLength: 200 }
+      responses:
+        "200":
+          description: The caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/item-types:
+    get:
+      operationId: listItemTypes
+      tags: [types]
+      summary: The catalogue of item types
+      description: >
+        Slots, cardinality, accepted media families, cover preference and
+        presentation primitives for every type. The UI builds its forms and
+        viewers from this rather than hard-coding a type list, which is what
+        lets a new datatype ship without a frontend change.
+      responses:
+        "200":
+          description: Every known type, ordered by id.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/ItemType" }
+        "304": { description: Not modified. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/archives:
+    get:
+      operationId: listArchives
+      tags: [archives]
+      summary: Archives the caller is a member of
+      responses:
+        "200":
+          description: Memberships, each naming the archive it refers to.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/ArchiveMembership" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: createArchive
+      tags: [archives]
+      summary: Create an archive
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [type, title]
+              additionalProperties: false
+              required: [name]
               properties:
-                type:
-                  type: string
-                  description: Open-ended, e.g. "photo", "document"
-                  example: photo
-                title:
-                  type: string
-                  example: Family photo 1952
+                name: { type: string, minLength: 1, maxLength: 200 }
       responses:
         "201":
-          description: Created
+          description: Created, with the caller as its owner.
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Item"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/InternalError"
+              schema: { $ref: "#/components/schemas/Archive" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
-    get:
-      tags: [items]
-      operationId: listItems
-      summary: List the caller's items
-      description: Returns only items belonging to the authenticated account.
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Item"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /items/{id}:
+  /v1/archives/{archiveId}:
     parameters:
-      - $ref: "#/components/parameters/ItemId"
+      - $ref: "#/components/parameters/ArchiveId"
     get:
-      tags: [items]
-      operationId: getItem
-      summary: Get one item
+      operationId: getArchive
+      tags: [archives]
+      summary: Get an archive
       responses:
         "200":
-          description: OK
+          description: The archive.
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Item"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          description: Not found (missing, or belongs to another account)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          $ref: "#/components/responses/InternalError"
+              schema: { $ref: "#/components/schemas/Archive" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
-    patch:
-      tags: [items]
-      operationId: updateItem
-      summary: Partially update an item
-      description: >
-        Only the fields present in the body are changed - everything else
-        is left as-is.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                title:
-                  type: string
-                date:
-                  $ref: "#/components/schemas/ArchiveDate"
-                location:
-                  $ref: "#/components/schemas/ArchiveLocation"
-                notes:
-                  type: string
-                tags:
-                  type: array
-                  items:
-                    type: string
-                people:
-                  type: array
-                  items:
-                    type: string
-              example:
-                tags: [family, "1952"]
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Item"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          description: Not found (missing, or belongs to another account)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /items/{id}/upload-url:
+  /v1/archives/{archiveId}/members:
     parameters:
-      - $ref: "#/components/parameters/ItemId"
-    post:
-      tags: [files]
-      operationId: presignUpload
-      summary: Get a presigned S3 upload URL
-      description: >
-        The frontend PUTs the file bytes directly to the returned
-        `uploadUrl`; the API never handles the bytes itself. Call
-        `POST /items/{id}/files` afterward to record that the upload
-        finished.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [role, filename, contentType]
-              properties:
-                role:
-                  type: string
-                  description: e.g. "front", "back", "page", "voice-memo"
-                  example: front
-                filename:
-                  type: string
-                  example: scan.jpg
-                contentType:
-                  type: string
-                  example: image/jpeg
+      - $ref: "#/components/parameters/ArchiveId"
+    get:
+      operationId: listMembers
+      tags: [archives]
+      summary: Everyone in the archive
       responses:
         "200":
-          description: OK
+          description: Members.
           content:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
+                required: [data]
                 properties:
-                  uploadUrl:
-                    type: string
-                    format: uri
-                  key:
-                    type: string
-                    description: The S3 object key the file will end up at
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          description: Item not found (missing, or belongs to another account)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          $ref: "#/components/responses/InternalError"
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Member" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
-  /items/{id}/files:
+  /v1/archives/{archiveId}/members/{accountId}:
     parameters:
-      - $ref: "#/components/parameters/ItemId"
-    post:
-      tags: [files]
-      operationId: attachFile
-      summary: Attach a completed upload to an item
-      description: >
-        Call this after the client's PUT to the presigned upload URL
-        succeeds. The response includes the attached file's generated
-        `id`.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [role, key]
-              properties:
-                role:
-                  type: string
-                  example: front
-                order:
-                  type: integer
-                  description: Page/sequence order within its role, if it matters
-                key:
-                  type: string
-                  description: The S3 object key returned by upload-url
-                contentType:
-                  type: string
-                sizeBytes:
-                  type: integer
-                  format: int64
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Item"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          description: Item not found (missing, or belongs to another account)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /items/{id}/files/{fileID}/download-url:
-    parameters:
-      - $ref: "#/components/parameters/ItemId"
-      - name: fileID
+      - $ref: "#/components/parameters/ArchiveId"
+      - name: accountId
         in: path
         required: true
-        description: >
-          The file's own id, not its role - an item can have several files
-          sharing a role (e.g. multiple voice memos, or document pages).
-        schema:
-          type: string
-    get:
-      tags: [files]
-      operationId: presignDownload
-      summary: Get a presigned S3 download URL for one file
+        schema: { type: string }
+        description: A Cognito `sub`.
+    put:
+      operationId: putMember
+      tags: [archives]
+      summary: Add a member or change their role
+      description: Owners only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role]
+              properties:
+                role: { $ref: "#/components/schemas/Role" }
+                displayName: { type: string, maxLength: 200 }
       responses:
         "200":
-          description: OK
+          description: The membership.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: removeMember
+      tags: [archives]
+      summary: Remove a member
+      description: >
+        Owners only. The last owner cannot be removed, because an archive
+        with no owner can never be administered again.
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/archives/{archiveId}/items:
+    parameters:
+      - $ref: "#/components/parameters/ArchiveId"
+    get:
+      operationId: listItems
+      tags: [items]
+      summary: A page of items, newest first
+      description: >
+        Ordering is server-defined and total (date, then item id), so a client
+        holding an index into the list - a lightbox stepping through
+        neighbours with the arrow keys - can rely on it not shifting between
+        requests.
+
+
+        Items with no recorded date are ordered at their creation time. The
+        sort position is an ordering device, not a claim about when a
+        photograph was taken; an absent `date` is what actually distinguishes
+        them.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 60 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+          description: >
+            From a previous response's `page.cursor`. Opaque, and tied to the
+            filters it was produced under - reusing one after changing a
+            filter is rejected rather than silently answering the old query.
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [date:desc, date:asc]
+            default: date:desc
+      responses:
+        "200":
+          description: One page.
           content:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
+                required: [data, page]
                 properties:
-                  downloadUrl:
-                    type: string
-                    format: uri
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          description: Item or file not found
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/ItemCard" }
+                  page: { $ref: "#/components/schemas/PageInfo" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createItem
+      tags: [items]
+      summary: Create an item
+      description: >
+        Takes the whole item rather than just a type and a title, so one form
+        submission is one request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ItemCreate" }
+      responses:
+        "201":
+          description: Created.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /v1/archives/{archiveId}/items/{itemId}:
+    parameters:
+      - $ref: "#/components/parameters/ArchiveId"
+      - $ref: "#/components/parameters/ItemId"
+    get:
+      operationId: getItem
+      tags: [items]
+      summary: Get one item, with a download URL on every file
+      responses:
+        "200":
+          description: The item.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: patchItem
+      tags: [items]
+      summary: Update an item's metadata
+      description: >
+        Only the fields present in the body change. A field sent as `null` is
+        cleared - which the previous version of this API could not express at
+        all, since an absent field and a null one were indistinguishable.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ItemPatch" }
+      responses:
+        "200":
+          description: The updated item.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    delete:
+      operationId: deleteItem
+      tags: [items]
+      summary: Delete an item and its files
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+
+  /v1/archives/{archiveId}/items/{itemId}/upload-url:
+    parameters:
+      - $ref: "#/components/parameters/ArchiveId"
+      - $ref: "#/components/parameters/ItemId"
+    post:
+      operationId: createUploadUrl
+      tags: [files]
+      summary: Get a presigned URL to upload a file into a slot
+      description: >
+        The file id is minted here, before any bytes move, and the S3 key is
+        built from it. The caller's filename is never part of the key, so
+        neither traversal nor a same-name collision is possible; it is kept
+        only for `Content-Disposition` on download.
+
+
+        `role` must name a slot the item's type declares, and the content type
+        must be one that slot accepts - both checked now rather than after a
+        large upload has already been paid for.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role, filename, contentType]
+              properties:
+                role: { type: string, description: A slot id on the item's type. }
+                filename: { type: string, minLength: 1, maxLength: 512 }
+                contentType: { type: string, minLength: 1 }
+                sizeBytes: { type: integer, format: int64, minimum: 0 }
+      responses:
+        "200":
+          description: Upload here, then confirm with `POST .../files`.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
-        "500":
-          $ref: "#/components/responses/InternalError"
+                type: object
+                additionalProperties: false
+                required: [fileId, uploadUrl, key, expiresIn]
+                properties:
+                  fileId: { type: string }
+                  uploadUrl: { type: string, format: uri }
+                  key: { type: string }
+                  expiresIn: { type: integer, description: Seconds. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /v1/archives/{archiveId}/items/{itemId}/files:
+    parameters:
+      - $ref: "#/components/parameters/ArchiveId"
+      - $ref: "#/components/parameters/ItemId"
+    post:
+      operationId: attachFile
+      tags: [files]
+      summary: Confirm an upload finished
+      description: >
+        Idempotent: confirming the same `fileId` twice attaches one file, not
+        two, because the id was chosen by the server before the upload rather
+        than invented here.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [fileId, role, key, contentType]
+              properties:
+                fileId: { type: string }
+                role: { type: string }
+                key: { type: string }
+                contentType: { type: string }
+                sizeBytes: { type: integer, format: int64, minimum: 0 }
+                originalFilename: { type: string, maxLength: 512 }
+      responses:
+        "200":
+          description: The item, with the file attached.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /v1/archives/{archiveId}/items/{itemId}/files/order:
+    parameters:
+      - $ref: "#/components/parameters/ArchiveId"
+      - $ref: "#/components/parameters/ItemId"
+    put:
+      operationId: reorderFiles
+      tags: [files]
+      summary: Set the display order of an item's files
+      description: >
+        Takes the complete ordered list of file ids. Order is position in the
+        list, so there is no per-file index to renumber and no way for two
+        files to claim the same place. A list that omits a file is rejected
+        rather than quietly dropping it.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [fileIds]
+              properties:
+                fileIds:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: The reordered item.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+
+  /v1/archives/{archiveId}/items/{itemId}/files/{fileId}:
+    parameters:
+      - $ref: "#/components/parameters/ArchiveId"
+      - $ref: "#/components/parameters/ItemId"
+      - name: fileId
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: deleteFile
+      tags: [files]
+      summary: Detach and delete a file
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The item, without that file.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
 
 components:
   securitySchemes:
@@ -347,163 +564,507 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
-      description: >
-        Static shared secret proving the caller is this app's own trusted
-        proxy (archives-ui), independent of which end user is signed in.
     userTokenAuth:
       type: apiKey
       in: header
       name: X-User-Token
       description: >
-        A Cognito access token, verified against the User Pool's JWKS.
-        Identifies which account is calling; every item is scoped to it.
-        Deliberately not the standard Authorization/Bearer header - the
-        proxy calling this API also signs every request with AWS SigV4,
-        which claims that header for itself.
+        A Cognito **access** token. ID tokens are rejected.
+
+
+        Deliberately its own header rather than `Authorization`: callers sign
+        every request with AWS SigV4 to satisfy the Lambda Function URL, and
+        SigV4 libraries overwrite `Authorization` with the signature. A
+        separate header sidesteps that collision.
+
+  headers:
+    ETag:
+      description: Send back as `If-Match` to make the next write conditional.
+      schema: { type: string }
 
   parameters:
-    ItemId:
-      name: id
+    ArchiveId:
+      name: archiveId
       in: path
       required: true
-      schema:
-        type: string
+      schema: { type: string }
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      schema: { type: string }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      schema: { type: string }
+      description: >
+        The `ETag` last seen. If the record has changed since, the write is
+        refused with `412` rather than overwriting someone else's edit.
 
   responses:
     BadRequest:
-      description: Invalid request body or missing required fields
+      description: Malformed request.
       content:
         application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
+          schema: { $ref: "#/components/schemas/Error" }
     Unauthorized:
-      description: Missing/invalid API key or bearer token
+      description: Missing or invalid API key or token.
       content:
         application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    InternalError:
-      description: Unexpected server error
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: A member, but without a role permitting this.
       content:
         application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: >
+        No such record - or one the caller is not a member of, reported
+        identically so ids cannot be probed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: The request conflicts with the current state.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PreconditionFailed:
+      description: The `If-Match` version is stale; someone else edited this.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ValidationFailed:
+      description: Well formed but invalid, with per-field detail.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
 
   schemas:
     Error:
       type: object
+      additionalProperties: false
+      required: [error]
       properties:
         error:
-          type: string
-      example:
-        error: item not found
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: { $ref: "#/components/schemas/ErrorCode" }
+            message: { type: string }
+            requestId: { type: string }
+            details:
+              type: array
+              items: { $ref: "#/components/schemas/FieldError" }
+
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, code, message]
+      properties:
+        field: { type: string }
+        code: { type: string }
+        message: { type: string }
+
+    ErrorCode:
+      type: string
+      description: A closed set, so clients can branch on it.
+      enum:
+        - unauthenticated
+        - forbidden
+        - not_found
+        - validation_failed
+        - conflict
+        - precondition_failed
+        - rate_limited
+        - internal
+
+    PageInfo:
+      type: object
+      additionalProperties: false
+      required: [hasMore, limit]
+      properties:
+        cursor: { type: string }
+        hasMore: { type: boolean }
+        limit: { type: integer }
+
+    Role:
+      type: string
+      enum: [owner, editor, viewer]
+
+    Me:
+      type: object
+      additionalProperties: false
+      required: [accountId, defaultArchiveId, archives]
+      properties:
+        accountId: { type: string }
+        displayName: { type: string }
+        defaultArchiveId: { type: string }
+        archives:
+          type: array
+          items: { $ref: "#/components/schemas/ArchiveMembership" }
+
+    Archive:
+      type: object
+      additionalProperties: false
+      required: [id, name, createdBy, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ArchiveMembership:
+      type: object
+      additionalProperties: false
+      required: [archiveId, role]
+      properties:
+        archiveId: { type: string }
+        name: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+
+    Member:
+      type: object
+      additionalProperties: false
+      required: [accountId, role, joinedAt]
+      properties:
+        accountId: { type: string }
+        displayName: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        joinedAt: { type: string, format: date-time }
 
     ArchiveDate:
       type: object
-      description: >
-        When something happened, which isn't always a single known day -
-        `kind` selects which of the other fields apply.
+      additionalProperties: false
       required: [kind]
+      description: >
+        When something happened, which is very often not a single known day.
+
+
+        Modelled as one flat object with a `kind` discriminator rather than a
+        `oneOf`, because the branch rules are clearer as prose plus
+        server-side validation than as generated union types no client library
+        handles pleasantly.
+
+
+        `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06`
+        or `1952-06-15`. A bare year means the whole year, not the first of
+        January.
       properties:
         kind:
           type: string
           enum: [exact, range, circa]
         date:
           type: string
-          description: The day, for kind=exact; the center point, for kind=circa
-          example: "1985-01-01"
-        start:
-          type: string
-          description: For kind=range
-        end:
-          type: string
-          description: For kind=range
+          description: The day, for `exact`; the centre point, for `circa`.
+        start: { type: string, description: "`range` only." }
+        end: { type: string, description: "`range` only." }
         unit:
           type: string
-          description: For kind=circa - how wide the uncertainty is
-          example: decade
+          enum: [month, 3-months, year, 5-years, decade, century]
+          description: >
+            `circa` only, and **optional**: how wide the uncertainty is, so
+            `year` reaches half a year either side of the centre.
+
+
+            Leave it out and write the date at whatever precision you
+            actually know - "circa 1960", "circa May 1975" - and the width is
+            inferred as one step wider than what you wrote: a year becomes
+            five years, a month becomes three, a day becomes a month.
+
+
+            One step wider, rather than matching, because that is what the
+            word means: an exact bare year already spans the whole year, so
+            an inferred width of one year would make `circa` say nothing at
+            all.
+
+
+            The inferred value is written back onto the stored record and
+            returned here, so a date always states exactly what it means
+            rather than depending on whatever the inference rule happens to
+            be years from now.
+
+    DateNormalized:
+      type: object
+      additionalProperties: false
+      readOnly: true
+      required: [dateSort, dateEarliest, dateLatest, datePrecision, dateBandTier]
+      description: >
+        Server-derived, so clients never parse dates and ordering is a
+        guarantee rather than something each client recomputes. `dateSort` is
+        the midpoint of the span for every kind, so a wide range no longer
+        claims to be as old as its earliest possible day.
+      properties:
+        dateSort: { type: string, format: date-time }
+        dateEarliest: { type: string, format: date-time }
+        dateLatest: { type: string, format: date-time }
+        datePrecision:
+          type: string
+          enum: [day, month, year, decade, century]
+        dateBandTier:
+          type: string
+          enum: [month, 3-months, year, 5-years, decade, century]
+          description: Which uncertainty band width to draw, for range and circa alike.
 
     ArchiveLocation:
       type: object
-      description: >
-        Where something happened. lat/lon/confidence are optional - a
-        location can be just a text label with no coordinates.
+      additionalProperties: false
       required: [label]
+      description: >
+        Where this particular item was recorded - possibly some way from
+        anything named. Coordinates are optional; in a real archive a location
+        is very often nothing but a label.
       properties:
-        label:
-          type: string
-          example: Asheville, NC
-        lat:
-          type: number
-          format: double
-        lon:
-          type: number
-          format: double
+        label: { type: string, minLength: 1 }
+        lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        lon: { type: number, format: double, minimum: -180, maximum: 180 }
         confidence:
           type: string
+          enum: [exact, neighborhood, city, region, state, country]
+          description: >
+            How precisely the position is known. An unrecognised value is
+            rejected rather than defaulted, because a client's fallback is its
+            most precise rendering - so a typo would otherwise turn into a
+            confident false claim.
+        radiusMeters:
+          type: integer
+          readOnly: true
+          description: >
+            Derived from `confidence`. Real-world metres, so a map can draw a
+            true-to-scale circle rather than one sized in screen pixels that
+            shrinks as you zoom in.
+
+    SubjectRef:
+      type: object
+      additionalProperties: false
+      required: [id, kind, name]
+      description: >
+        A person or a pet tagged in this item, denormalized so a gallery tile
+        needs no second lookup. One list rather than separate people and
+        animal lists, so filters and indexes do not multiply with each new
+        kind of subject.
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        name: { type: string }
 
     File:
       type: object
+      additionalProperties: false
+      required: [id, role, contentType, sizeBytes, status]
       description: >
-        One stored blob (a photo, a PDF page, a voice memo, ...) attached
-        to an item. `id` is what individual files are addressed by - role
-        alone isn't unique, since an item can have several files sharing a
-        role.
+        There is deliberately no `order` field: position in the item's `files`
+        array is the order, and the server returns them in display order.
       properties:
-        id:
+        id: { type: string }
+        role: { type: string, description: The slot this file fills. }
+        contentType: { type: string }
+        sizeBytes: { type: integer, format: int64 }
+        originalFilename: { type: string }
+        width: { type: integer, description: Zero until derivatives are generated. }
+        height: { type: integer }
+        status:
           type: string
-        role:
-          type: string
-          example: front
-        order:
-          type: integer
-        key:
-          type: string
-          description: S3 object key
-        contentType:
-          type: string
-        sizeBytes:
-          type: integer
-          format: int64
-
-    Item:
-      type: object
-      description: One archived record - metadata plus zero or more attached files.
-      properties:
-        id:
-          type: string
-        accountId:
-          type: string
+          enum: [pending, ready, failed]
           description: >
-            Whose catalog this belongs to - a Cognito user's sub. Every
-            endpoint scopes to this automatically; it's never set by the
-            caller.
-        type:
+            `pending` between an upload finishing and its derivatives
+            existing. Render a placeholder rather than a broken image.
+        url:
           type: string
-          example: photo
-        title:
-          type: string
-        date:
-          $ref: "#/components/schemas/ArchiveDate"
-        location:
-          $ref: "#/components/schemas/ArchiveLocation"
-        notes:
-          type: string
+          format: uri
+          readOnly: true
+          description: >
+            A presigned download URL, returned inline. Fetching these one
+            request at a time is what made a gallery of 200 items cost some
+            400 round trips before a single pixel rendered.
+        urlExpiresIn: { type: integer, readOnly: true, description: Seconds. }
+
+    ItemCard:
+      type: object
+      additionalProperties: false
+      required:
+        [id, archiveId, typeId, typeVersion, title, tags, subjects, capabilities, fileCount, createdAt, updatedAt]
+      description: >
+        What the gallery, map and timeline need, and exactly what the
+        secondary index carries - so one query serves all three without
+        reading whole items.
+      properties:
+        id: { type: string }
+        archiveId: { type: string }
+        typeId: { type: string }
+        typeVersion: { type: integer }
+        title: { type: string }
+        date: { $ref: "#/components/schemas/ArchiveDate" }
+        dateNormalized: { $ref: "#/components/schemas/DateNormalized" }
+        location: { $ref: "#/components/schemas/ArchiveLocation" }
+        placeId: { type: string }
         tags:
           type: array
-          items:
-            type: string
-        people:
+          items: { type: string }
+        subjects:
           type: array
-          items:
-            type: string
-        files:
+          items: { $ref: "#/components/schemas/SubjectRef" }
+        capabilities:
           type: array
-          items:
-            $ref: "#/components/schemas/File"
-        createdAt:
+          description: Media families this item actually holds, not what its type permits.
+          items: { $ref: "#/components/schemas/MediaFamily" }
+        coverFileId: { type: string }
+        coverPinned:
+          type: boolean
+          description: >
+            True when a person chose the cover. A derived cover is recomputed
+            as files change; a chosen one is left alone.
+        coverUrl: { type: string, format: uri, readOnly: true }
+        coverWidth: { type: integer }
+        coverHeight: { type: integer }
+        fileCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Item:
+      allOf:
+        - $ref: "#/components/schemas/ItemCard"
+        - type: object
+          required: [files]
+          properties:
+            notes: { type: string }
+            attributes:
+              type: object
+              additionalProperties: true
+              description: Type-specific fields the manifest declares. Unknown keys are rejected.
+            files:
+              type: array
+              items: { $ref: "#/components/schemas/File" }
+
+    MediaFamily:
+      type: string
+      enum: [image, audio, video, pdf, model3d]
+
+    ItemCreate:
+      type: object
+      additionalProperties: false
+      required: [typeId, title]
+      properties:
+        typeId: { type: string }
+        title: { type: string, minLength: 1, maxLength: 500 }
+        date: { $ref: "#/components/schemas/ArchiveDate" }
+        location: { $ref: "#/components/schemas/ArchiveLocation" }
+        placeId: { type: string }
+        notes: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        subjects:
+          type: array
+          items: { $ref: "#/components/schemas/SubjectRef" }
+        attributes:
+          type: object
+          additionalProperties: true
+
+    ItemPatch:
+      type: object
+      additionalProperties: false
+      description: Absent fields are left alone; fields sent as `null` are cleared.
+      properties:
+        title: { type: string, minLength: 1, maxLength: 500 }
+        date:
+          allOf: [{ $ref: "#/components/schemas/ArchiveDate" }]
+          nullable: true
+        location:
+          allOf: [{ $ref: "#/components/schemas/ArchiveLocation" }]
+          nullable: true
+        placeId: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        tags:
+          type: array
+          nullable: true
+          items: { type: string }
+        subjects:
+          type: array
+          nullable: true
+          items: { $ref: "#/components/schemas/SubjectRef" }
+        attributes:
+          type: object
+          nullable: true
+          additionalProperties: true
+        coverFileId: { type: string, nullable: true }
+
+    ItemType:
+      type: object
+      additionalProperties: false
+      required: [id, label, version, slots, cover, presentation]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        version: { type: integer }
+        icon: { type: string }
+        category: { type: string }
+        slots:
+          type: array
+          items: { $ref: "#/components/schemas/ItemTypeSlot" }
+        attributes:
+          type: array
+          items: { $ref: "#/components/schemas/ItemTypeAttribute" }
+        cover:
+          type: object
+          additionalProperties: false
+          required: [prefer]
+          properties:
+            prefer:
+              type: array
+              items: { type: string }
+        presentation:
+          type: array
+          items: { $ref: "#/components/schemas/ItemTypePresentation" }
+
+    ItemTypePresentation:
+      type: object
+      additionalProperties: false
+      required: [primitive, slots]
+      properties:
+        primitive:
           type: string
-          format: date-time
-        updatedAt:
+          enum: [single-image, flippable, paged, stack, audio, pdf, video, model3d]
+        slots:
+          type: array
+          items: { type: string }
+
+    ItemTypeSlot:
+      type: object
+      additionalProperties: false
+      required: [id, label, accepts, min, max, ordered]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        accepts:
+          type: array
+          items: { $ref: "#/components/schemas/MediaFamily" }
+        min: { type: integer, description: Almost always 0 - slots are optional by default. }
+        max: { type: integer, minimum: 1 }
+        ordered: { type: boolean }
+        maxSizeBytes: { type: integer, format: int64 }
+        deprecated:
+          type: boolean
+          description: Hidden from capture, still rendered for files already stored in it.
+        renamedFrom:
+          type: array
+          items: { type: string }
+
+    ItemTypeAttribute:
+      type: object
+      additionalProperties: false
+      required: [id, label, type]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        type:
           type: string
-          format: date-time
+          enum: [string, integer, number, boolean, enum]
+        options:
+          type: array
+          items: { type: string }
+        min: { type: number, format: double }
+        max: { type: number, format: double }
