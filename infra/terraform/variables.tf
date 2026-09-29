@@ -24,7 +24,7 @@ variable "lambda_function_name" {
 variable "s3_bucket_name" {
   description = "Bucket holding originals and derivatives. Globally unique."
   type        = string
-  default     = "archive-prod"
+  default     = "archive-api-816079797917"
 }
 
 variable "dynamodb_table_name" {
@@ -64,6 +64,17 @@ variable "api_key" {
   sensitive   = true
 }
 
+variable "lambda_memory_mb" {
+  description = <<-EOT
+    Lambda scales CPU with memory, so this is a latency/price dial rather than
+    a limit. The spine endpoint reads and aggregates a whole archive in memory
+    and will eventually want more than 128; raise it when there are numbers
+    that say so, not before.
+  EOT
+  type        = number
+  default     = 128
+}
+
 variable "log_retention_days" {
   description = "CloudWatch Logs retention. Lambda's default is never-expire, which quietly accrues cost."
   type        = number
@@ -87,7 +98,14 @@ variable "media_cors_origins" {
     archives-ui runs in the browser. The API itself needs no CORS (it is only
     ever reached server-side through the Next proxy), but these uploads skip
     the proxy entirely.
+
+    Both entries are load-bearing: the deployed frontend is the Vercel one, and
+    removing it would break uploads in production while everything else kept
+    working.
   EOT
   type        = list(string)
-  default     = ["http://localhost:3000"]
+  default = [
+    "http://localhost:3000",
+    "https://archives-ui.vercel.app",
+  ]
 }

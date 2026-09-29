@@ -12,7 +12,9 @@ data "aws_iam_policy_document" "lambda_assume_role" {
 }
 
 resource "aws_iam_role" "api_lambda" {
-  name               = "${var.lambda_function_name}-exec"
+  # Named as it was created, so this adopts the existing role rather than
+  # making a second one and orphaning the first.
+  name               = "${var.lambda_function_name}-lambda-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
 }
 
@@ -77,7 +79,7 @@ data "aws_iam_policy_document" "api_lambda" {
 }
 
 resource "aws_iam_role_policy" "api_lambda" {
-  name   = "${var.lambda_function_name}-access"
+  name   = "${var.lambda_function_name}-data-access"
   role   = aws_iam_role.api_lambda.id
   policy = data.aws_iam_policy_document.api_lambda.json
 }

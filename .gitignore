@@ -54,3 +54,7 @@ docs/api.html
 # the files are ignored outright and only .example versions are shared.
 bruno/environments/*.bru
 !bruno/environments/*.bru.example
+
+# A saved plan contains every attribute value in plaintext, secrets included.
+tfplan
+*.tfplan

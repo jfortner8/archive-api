@@ -24,7 +24,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "media" {
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
     }
-    bucket_key_enabled = true
+    bucket_key_enabled = false
   }
 }
 
@@ -104,7 +104,7 @@ resource "aws_s3_bucket_cors_configuration" "media" {
   bucket = aws_s3_bucket.media.id
 
   cors_rule {
-    allowed_methods = ["PUT", "GET", "HEAD"]
+    allowed_methods = ["PUT", "GET"]
     allowed_origins = var.media_cors_origins
     allowed_headers = ["*"]
     expose_headers  = ["ETag"]
