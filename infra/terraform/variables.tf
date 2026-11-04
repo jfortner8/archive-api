@@ -109,3 +109,12 @@ variable "media_cors_origins" {
     "https://archives-ui.vercel.app",
   ]
 }
+
+variable "github_repository" {
+  description = <<-EOT
+    owner/repo, used in the OIDC trust condition so only this repository's
+    workflows can assume the read-only plan role.
+  EOT
+  type        = string
+  default     = "jfortner8/archive-api"
+}
