@@ -148,12 +148,12 @@ func TestComplexParentPatterns(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildTree: %v", err)
 		}
-		if !contains(tree, childA.ID) || !contains(tree, childB.ID) {
+		if !treeHas(tree, childA.ID) || !treeHas(tree, childB.ID) {
 			t.Error("both half-siblings should appear under their shared parent")
 		}
 		// The other partners are not descendants and must not be pulled in
 		// as though they were.
-		if contains(tree, first.ID) || contains(tree, second.ID) {
+		if treeHas(tree, first.ID) || treeHas(tree, second.ID) {
 			t.Error("a co-parent appeared in a descendants-only walk")
 		}
 	})
@@ -175,7 +175,7 @@ func TestComplexParentPatterns(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildTree: %v", err)
 		}
-		if !contains(tree, pupA.ID) || !contains(tree, pupB.ID) {
+		if !treeHas(tree, pupA.ID) || !treeHas(tree, pupB.ID) {
 			t.Error("a sire's litters by different dams should all appear")
 		}
 	})
@@ -202,13 +202,13 @@ func TestOwnershipDoesNotBecomeDescent(t *testing.T) {
 	}
 
 	// The dog hangs off its owner...
-	if !contains(tree, rufus.ID) {
+	if !treeHas(tree, rufus.ID) {
 		t.Error("an owned animal did not appear on its owner")
 	}
 	// ...but the walk does not continue through it. Otherwise asking for
 	// someone's descendants returns their dog's puppies, and "depth" means
 	// two different things in one response.
-	if contains(tree, puppy.ID) {
+	if treeHas(tree, puppy.ID) {
 		t.Error("the walk continued through an ownership edge into a pedigree")
 	}
 
@@ -217,11 +217,11 @@ func TestOwnershipDoesNotBecomeDescent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTree: %v", err)
 	}
-	if !contains(petTree, puppy.ID) {
+	if !treeHas(petTree, puppy.ID) {
 		t.Error("a tree rooted at the animal did not include its own offspring")
 	}
 	// And its owner is attached from that side too.
-	if !contains(petTree, grandma.ID) {
+	if !treeHas(petTree, grandma.ID) {
 		t.Error("an animal's tree did not show who it belonged to")
 	}
 }
@@ -246,10 +246,10 @@ func TestOwnershipDoesNotConsumeDepth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTree: %v", err)
 	}
-	if !contains(tree, mother.ID) {
+	if !treeHas(tree, mother.ID) {
 		t.Fatal("the one requested generation is missing")
 	}
-	if !contains(tree, rufus.ID) {
+	if !treeHas(tree, rufus.ID) {
 		t.Error("an animal was dropped because the depth budget was spent on people")
 	}
 }
@@ -313,17 +313,17 @@ func TestTreeDirections(t *testing.T) {
 	)
 
 	ancestors, _ := g.BuildTree(mother.ID, TreeAncestors, 2)
-	if !contains(ancestors, grandma.ID) || contains(ancestors, child.ID) {
+	if !treeHas(ancestors, grandma.ID) || treeHas(ancestors, child.ID) {
 		t.Error("an ancestors walk should reach upward only")
 	}
 
 	descendants, _ := g.BuildTree(mother.ID, TreeDescendants, 2)
-	if !contains(descendants, child.ID) || contains(descendants, grandma.ID) {
+	if !treeHas(descendants, child.ID) || treeHas(descendants, grandma.ID) {
 		t.Error("a descendants walk should reach downward only")
 	}
 
 	both, _ := g.BuildTree(mother.ID, TreeBoth, 1)
-	if !contains(both, grandma.ID) || !contains(both, child.ID) {
+	if !treeHas(both, grandma.ID) || !treeHas(both, child.ID) {
 		t.Error("a both walk should reach in each direction")
 	}
 }
@@ -335,7 +335,7 @@ func TestTreeRejectsAnUnknownRoot(t *testing.T) {
 	}
 }
 
-func contains(tree *Tree, id SubjectID) bool {
+func treeHas(tree *Tree, id SubjectID) bool {
 	for _, node := range tree.Nodes {
 		if node.ID == id {
 			return true

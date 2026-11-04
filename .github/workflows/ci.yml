@@ -180,8 +180,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build Lambda package
-        run: GOOS=linux GOARCH=arm64 go build -o bootstrap ./cmd/lambda && zip lambda.zip bootstrap
+      - name: Build Lambda packages
+        run: |
+          GOOS=linux GOARCH=arm64 go build -o bootstrap ./cmd/lambda && zip lambda.zip bootstrap
+          GOOS=linux GOARCH=arm64 go build -o bootstrap ./cmd/derive && zip derive.zip bootstrap
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -195,3 +197,10 @@ jobs:
             --function-name archive-api \
             --zip-file fileb://lambda.zip
           aws lambda wait function-updated --function-name archive-api
+
+          # The derivative function shares this module, so it has to move
+          # with the API rather than drift behind it.
+          aws lambda update-function-code \
+            --function-name archive-api-derive \
+            --zip-file fileb://derive.zip
+          aws lambda wait function-updated --function-name archive-api-derive

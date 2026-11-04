@@ -29,7 +29,12 @@ func optional[T comparable](v T) *T {
 // so doing sixty of them costs microseconds - whereas asking the client to
 // fetch sixty URLs cost it sixty round trips before anything rendered.
 type fileURLs struct {
-	byFile    map[domain.FileID]string
+	byFile map[domain.FileID]string
+
+	// byVariant is keyed by file id then rung, so a response can hand the
+	// client every size it might want in one go rather than making it ask.
+	byVariant map[domain.FileID]map[string]string
+
 	expiresIn int
 }
 
@@ -132,6 +137,23 @@ func toGenFile(f domain.File, urls fileURLs) gen.File {
 	if url, ok := urls.byFile[f.ID]; ok {
 		out.Url = ptr(url)
 		out.UrlExpiresIn = ptr(urls.expiresIn)
+	}
+
+	if len(f.Variants) > 0 {
+		variants := make([]gen.FileVariant, 0, len(f.Variants))
+		for _, v := range f.Variants {
+			entry := gen.FileVariant{
+				Name:      gen.FileVariantName(v.Name),
+				Width:     v.Width,
+				Height:    v.Height,
+				SizeBytes: v.Bytes,
+			}
+			if url, ok := urls.byVariant[f.ID][v.Name]; ok {
+				entry.Url = ptr(url)
+			}
+			variants = append(variants, entry)
+		}
+		out.Variants = ptr(variants)
 	}
 	return out
 }

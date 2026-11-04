@@ -1,6 +1,6 @@
 module github.com/jfortner8/archive-api
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/MicahParks/jwkset v0.11.3
@@ -15,6 +15,7 @@ require (
 	github.com/awslabs/aws-lambda-go-api-proxy v0.16.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
+	golang.org/x/image v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

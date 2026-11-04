@@ -77,6 +77,13 @@ const (
 	Ready   FileStatus = "ready"
 )
 
+// Defines values for FileVariantName.
+const (
+	Card  FileVariantName = "card"
+	Full  FileVariantName = "full"
+	Thumb FileVariantName = "thumb"
+)
+
 // Defines values for ItemTypeAttributeType.
 const (
 	Boolean ItemTypeAttributeType = "boolean"
@@ -122,10 +129,82 @@ const (
 	RoleViewer Role = "viewer"
 )
 
+// Defines values for FilterSubjectMode.
+const (
+	FilterSubjectModeAll FilterSubjectMode = "all"
+	FilterSubjectModeAny FilterSubjectMode = "any"
+)
+
+// Defines values for FilterTagMode.
+const (
+	FilterTagModeAll FilterTagMode = "all"
+	FilterTagModeAny FilterTagMode = "any"
+)
+
+// Defines values for SortParam.
+const (
+	SortParamDateAsc  SortParam = "date:asc"
+	SortParamDateDesc SortParam = "date:desc"
+)
+
 // Defines values for ListItemsParamsSort.
 const (
-	DateAsc  ListItemsParamsSort = "date:asc"
-	DateDesc ListItemsParamsSort = "date:desc"
+	ListItemsParamsSortDateAsc  ListItemsParamsSort = "date:asc"
+	ListItemsParamsSortDateDesc ListItemsParamsSort = "date:desc"
+)
+
+// Defines values for ListItemsParamsTagMode.
+const (
+	ListItemsParamsTagModeAll ListItemsParamsTagMode = "all"
+	ListItemsParamsTagModeAny ListItemsParamsTagMode = "any"
+)
+
+// Defines values for ListItemsParamsSubjectMode.
+const (
+	ListItemsParamsSubjectModeAll ListItemsParamsSubjectMode = "all"
+	ListItemsParamsSubjectModeAny ListItemsParamsSubjectMode = "any"
+)
+
+// Defines values for GetItemFacetsParamsTagMode.
+const (
+	GetItemFacetsParamsTagModeAll GetItemFacetsParamsTagMode = "all"
+	GetItemFacetsParamsTagModeAny GetItemFacetsParamsTagMode = "any"
+)
+
+// Defines values for GetItemFacetsParamsSubjectMode.
+const (
+	GetItemFacetsParamsSubjectModeAll GetItemFacetsParamsSubjectMode = "all"
+	GetItemFacetsParamsSubjectModeAny GetItemFacetsParamsSubjectMode = "any"
+)
+
+// Defines values for GetItemFacetsParamsFacets.
+const (
+	GetItemFacetsParamsFacetsCapability  GetItemFacetsParamsFacets = "capability"
+	GetItemFacetsParamsFacetsDateDecade  GetItemFacetsParamsFacets = "date:decade"
+	GetItemFacetsParamsFacetsDateYear    GetItemFacetsParamsFacets = "date:year"
+	GetItemFacetsParamsFacetsPlace       GetItemFacetsParamsFacets = "place"
+	GetItemFacetsParamsFacetsSubject     GetItemFacetsParamsFacets = "subject"
+	GetItemFacetsParamsFacetsSubjectKind GetItemFacetsParamsFacets = "subjectKind"
+	GetItemFacetsParamsFacetsTag         GetItemFacetsParamsFacets = "tag"
+	GetItemFacetsParamsFacetsType        GetItemFacetsParamsFacets = "type"
+)
+
+// Defines values for GetItemIndexParamsTagMode.
+const (
+	GetItemIndexParamsTagModeAll GetItemIndexParamsTagMode = "all"
+	GetItemIndexParamsTagModeAny GetItemIndexParamsTagMode = "any"
+)
+
+// Defines values for GetItemIndexParamsSubjectMode.
+const (
+	GetItemIndexParamsSubjectModeAll GetItemIndexParamsSubjectMode = "all"
+	GetItemIndexParamsSubjectModeAny GetItemIndexParamsSubjectMode = "any"
+)
+
+// Defines values for GetItemIndexParamsSort.
+const (
+	DateAsc  GetItemIndexParamsSort = "date:asc"
+	DateDesc GetItemIndexParamsSort = "date:desc"
 )
 
 // Defines values for GetSubjectTreeParamsDirection.
@@ -234,6 +313,27 @@ type Error struct {
 // ErrorCode A closed set, so clients can branch on it.
 type ErrorCode string
 
+// FacetResponse defines model for FacetResponse.
+type FacetResponse struct {
+	// ArchiveTotal Items in the archive at all.
+	ArchiveTotal int `json:"archiveTotal"`
+
+	// Data Counts per requested field, most common first.
+	Data map[string][]FacetValue `json:"data"`
+
+	// Total Items matching the filter in full.
+	Total int `json:"total"`
+}
+
+// FacetValue defines model for FacetValue.
+type FacetValue struct {
+	Count int `json:"count"`
+
+	// Label A readable name where the value is an id, so a filter chip need not be a UUID.
+	Label *string `json:"label,omitempty"`
+	Value string  `json:"value"`
+}
+
 // FieldError defines model for FieldError.
 type FieldError struct {
 	Code    string `json:"code"`
@@ -261,12 +361,31 @@ type File struct {
 	// UrlExpiresIn Seconds.
 	UrlExpiresIn *int `json:"urlExpiresIn,omitempty"`
 
+	// Variants Generated sizes, each with its own presigned url. Absent until the derivative pipeline has run, and absent permanently for a format nothing can decode - notably HEIC, which has no pure-Go decoder.
+	//
+	// So pick the smallest rung at least as large as you need and fall back to `url` (the original) rather than assuming a rung exists. A rung is also omitted when its re-encode would not have been smaller than the original, which guarantees every variant present is a saving.
+	Variants *[]FileVariant `json:"variants,omitempty"`
+
 	// Width Zero until derivatives are generated.
 	Width *int `json:"width,omitempty"`
 }
 
 // FileStatus `pending` between an upload finishing and its derivatives existing. Render a placeholder rather than a broken image.
 type FileStatus string
+
+// FileVariant defines model for FileVariant.
+type FileVariant struct {
+	Height int `json:"height"`
+
+	// Name thumb (400px) suits a timeline strip or a gallery tile at 2x density, card (800px) a larger tile, full (1600px) the lightbox.
+	Name      FileVariantName `json:"name"`
+	SizeBytes int64           `json:"sizeBytes"`
+	Url       *string         `json:"url,omitempty"`
+	Width     int             `json:"width"`
+}
+
+// FileVariantName thumb (400px) suits a timeline strip or a gallery tile at 2x density, card (800px) a larger tile, full (1600px) the lightbox.
+type FileVariantName string
 
 // Item defines model for Item.
 type Item struct {
@@ -638,11 +757,62 @@ type SubjectTree struct {
 // ArchiveId defines model for ArchiveId.
 type ArchiveId = string
 
+// FilterBBox defines model for FilterBBox.
+type FilterBBox = string
+
+// FilterDateOverlap defines model for FilterDateOverlap.
+type FilterDateOverlap = bool
+
+// FilterFrom defines model for FilterFrom.
+type FilterFrom = string
+
+// FilterHas defines model for FilterHas.
+type FilterHas = []MediaFamily
+
+// FilterHasDate defines model for FilterHasDate.
+type FilterHasDate = bool
+
+// FilterHasFiles defines model for FilterHasFiles.
+type FilterHasFiles = bool
+
+// FilterHasGeo defines model for FilterHasGeo.
+type FilterHasGeo = bool
+
+// FilterPlaceId defines model for FilterPlaceId.
+type FilterPlaceId = []string
+
+// FilterQ defines model for FilterQ.
+type FilterQ = string
+
+// FilterSubjectId defines model for FilterSubjectId.
+type FilterSubjectId = []string
+
+// FilterSubjectKind defines model for FilterSubjectKind.
+type FilterSubjectKind = []string
+
+// FilterSubjectMode defines model for FilterSubjectMode.
+type FilterSubjectMode string
+
+// FilterTag defines model for FilterTag.
+type FilterTag = []string
+
+// FilterTagMode defines model for FilterTagMode.
+type FilterTagMode string
+
+// FilterTo defines model for FilterTo.
+type FilterTo = string
+
+// FilterTypeId defines model for FilterTypeId.
+type FilterTypeId = []string
+
 // IfMatch defines model for IfMatch.
 type IfMatch = string
 
 // ItemId defines model for ItemId.
 type ItemId = string
+
+// SortParam defines model for SortParam.
+type SortParam string
 
 // SubjectId defines model for SubjectId.
 type SubjectId = string
@@ -678,12 +848,183 @@ type ListItemsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Cursor From a previous response's `page.cursor`. Opaque, and tied to the filters it was produced under - reusing one after changing a filter is rejected rather than silently answering the old query.
+	//
+	// Keyset rather than an offset, so it does not shift under an insert: the client holds an index into this ordering to drive arrow-key navigation, and that has to stay stable.
 	Cursor *string              `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Sort   *ListItemsParamsSort `form:"sort,omitempty" json:"sort,omitempty"`
+
+	// Q Case-insensitive substring over title, tags and subject names.
+	//
+	// Not notes - the field a searcher most often means. Notes is not carried in the secondary index these projections read, and adding it means rebuilding the index. Not relevance ranking, stemming or typo tolerance either; at a few thousand items this finds what you meant far more often than it misses.
+	Q *FilterQ `form:"q,omitempty" json:"q,omitempty"`
+
+	// TypeId Repeatable or comma-separated. Several values are OR.
+	TypeId *FilterTypeId `form:"typeId,omitempty" json:"typeId,omitempty"`
+
+	// Tag Repeatable or comma-separated. Matched case-insensitively.
+	Tag *FilterTag `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// TagMode `any` (default) matches an item carrying any of the tags; `all` requires every one.
+	TagMode *ListItemsParamsTagMode `form:"tagMode,omitempty" json:"tagMode,omitempty"`
+
+	// SubjectId Items tagged with this person or pet. This is how "photographs of Grandma" is asked - there is deliberately no `/subjects/{id}/items`, because a second list endpoint would mean a second pagination and filter surface to keep in step.
+	SubjectId   *FilterSubjectId            `form:"subjectId,omitempty" json:"subjectId,omitempty"`
+	SubjectMode *ListItemsParamsSubjectMode `form:"subjectMode,omitempty" json:"subjectMode,omitempty"`
+
+	// SubjectKind Items tagged with at least one subject of this kind, e.g. `pet`.
+	SubjectKind *FilterSubjectKind `form:"subjectKind,omitempty" json:"subjectKind,omitempty"`
+	PlaceId     *FilterPlaceId     `form:"placeId,omitempty" json:"placeId,omitempty"`
+
+	// Has Media the item actually holds, not what its type permits - so `has=audio` means something you can really listen to, rather than every CD including the ones that are only photographs of a disc. Several values are AND.
+	Has *FilterHas `form:"has,omitempty" json:"has,omitempty"`
+
+	// From Partial ISO accepted. `1940` means the start of 1940.
+	From *FilterFrom `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Partial ISO accepted. `1950` means the **end** of 1950, not its first instant.
+	To *FilterTo `form:"to,omitempty" json:"to,omitempty"`
+
+	// DateOverlap Default true: an item whose date range intersects the window matches, so a photograph dated 1930-1960 is returned when asking for the 1940s - it genuinely might be the one you want, and strict containment would hide it. Set false to require the item's sort point to fall inside the window instead.
+	DateOverlap *FilterDateOverlap `form:"dateOverlap,omitempty" json:"dateOverlap,omitempty"`
+
+	// HasDate Undated items never satisfy a from/to window, so this is how you reach them - and how the timeline excludes them.
+	HasDate *FilterHasDate `form:"hasDate,omitempty" json:"hasDate,omitempty"`
+
+	// HasGeo Whether the item has coordinates, as opposed to only a place label.
+	HasGeo   *FilterHasGeo   `form:"hasGeo,omitempty" json:"hasGeo,omitempty"`
+	HasFiles *FilterHasFiles `form:"hasFiles,omitempty" json:"hasFiles,omitempty"`
+
+	// Bbox `minLon,minLat,maxLon,maxLat`. A box whose minLon exceeds its maxLon wraps the antimeridian rather than matching nothing, which is what a map panned past 180° sends. Items without coordinates never match.
+	Bbox *FilterBBox `form:"bbox,omitempty" json:"bbox,omitempty"`
 }
 
 // ListItemsParamsSort defines parameters for ListItems.
 type ListItemsParamsSort string
+
+// ListItemsParamsTagMode defines parameters for ListItems.
+type ListItemsParamsTagMode string
+
+// ListItemsParamsSubjectMode defines parameters for ListItems.
+type ListItemsParamsSubjectMode string
+
+// GetItemFacetsParams defines parameters for GetItemFacets.
+type GetItemFacetsParams struct {
+	// Q Case-insensitive substring over title, tags and subject names.
+	//
+	// Not notes - the field a searcher most often means. Notes is not carried in the secondary index these projections read, and adding it means rebuilding the index. Not relevance ranking, stemming or typo tolerance either; at a few thousand items this finds what you meant far more often than it misses.
+	Q *FilterQ `form:"q,omitempty" json:"q,omitempty"`
+
+	// TypeId Repeatable or comma-separated. Several values are OR.
+	TypeId *FilterTypeId `form:"typeId,omitempty" json:"typeId,omitempty"`
+
+	// Tag Repeatable or comma-separated. Matched case-insensitively.
+	Tag *FilterTag `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// TagMode `any` (default) matches an item carrying any of the tags; `all` requires every one.
+	TagMode *GetItemFacetsParamsTagMode `form:"tagMode,omitempty" json:"tagMode,omitempty"`
+
+	// SubjectId Items tagged with this person or pet. This is how "photographs of Grandma" is asked - there is deliberately no `/subjects/{id}/items`, because a second list endpoint would mean a second pagination and filter surface to keep in step.
+	SubjectId   *FilterSubjectId                `form:"subjectId,omitempty" json:"subjectId,omitempty"`
+	SubjectMode *GetItemFacetsParamsSubjectMode `form:"subjectMode,omitempty" json:"subjectMode,omitempty"`
+
+	// SubjectKind Items tagged with at least one subject of this kind, e.g. `pet`.
+	SubjectKind *FilterSubjectKind `form:"subjectKind,omitempty" json:"subjectKind,omitempty"`
+	PlaceId     *FilterPlaceId     `form:"placeId,omitempty" json:"placeId,omitempty"`
+
+	// Has Media the item actually holds, not what its type permits - so `has=audio` means something you can really listen to, rather than every CD including the ones that are only photographs of a disc. Several values are AND.
+	Has *FilterHas `form:"has,omitempty" json:"has,omitempty"`
+
+	// From Partial ISO accepted. `1940` means the start of 1940.
+	From *FilterFrom `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Partial ISO accepted. `1950` means the **end** of 1950, not its first instant.
+	To *FilterTo `form:"to,omitempty" json:"to,omitempty"`
+
+	// DateOverlap Default true: an item whose date range intersects the window matches, so a photograph dated 1930-1960 is returned when asking for the 1940s - it genuinely might be the one you want, and strict containment would hide it. Set false to require the item's sort point to fall inside the window instead.
+	DateOverlap *FilterDateOverlap `form:"dateOverlap,omitempty" json:"dateOverlap,omitempty"`
+
+	// HasDate Undated items never satisfy a from/to window, so this is how you reach them - and how the timeline excludes them.
+	HasDate *FilterHasDate `form:"hasDate,omitempty" json:"hasDate,omitempty"`
+
+	// HasGeo Whether the item has coordinates, as opposed to only a place label.
+	HasGeo   *FilterHasGeo   `form:"hasGeo,omitempty" json:"hasGeo,omitempty"`
+	HasFiles *FilterHasFiles `form:"hasFiles,omitempty" json:"hasFiles,omitempty"`
+
+	// Bbox `minLon,minLat,maxLon,maxLat`. A box whose minLon exceeds its maxLon wraps the antimeridian rather than matching nothing, which is what a map panned past 180° sends. Items without coordinates never match.
+	Bbox *FilterBBox `form:"bbox,omitempty" json:"bbox,omitempty"`
+
+	// Facets Which fields to count. Repeatable or comma-separated. Defaults to type, tag, subject, capability and date:decade.
+	Facets *[]GetItemFacetsParamsFacets `form:"facets,omitempty" json:"facets,omitempty"`
+}
+
+// GetItemFacetsParamsTagMode defines parameters for GetItemFacets.
+type GetItemFacetsParamsTagMode string
+
+// GetItemFacetsParamsSubjectMode defines parameters for GetItemFacets.
+type GetItemFacetsParamsSubjectMode string
+
+// GetItemFacetsParamsFacets defines parameters for GetItemFacets.
+type GetItemFacetsParamsFacets string
+
+// GetItemIndexParams defines parameters for GetItemIndex.
+type GetItemIndexParams struct {
+	// Q Case-insensitive substring over title, tags and subject names.
+	//
+	// Not notes - the field a searcher most often means. Notes is not carried in the secondary index these projections read, and adding it means rebuilding the index. Not relevance ranking, stemming or typo tolerance either; at a few thousand items this finds what you meant far more often than it misses.
+	Q *FilterQ `form:"q,omitempty" json:"q,omitempty"`
+
+	// TypeId Repeatable or comma-separated. Several values are OR.
+	TypeId *FilterTypeId `form:"typeId,omitempty" json:"typeId,omitempty"`
+
+	// Tag Repeatable or comma-separated. Matched case-insensitively.
+	Tag *FilterTag `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// TagMode `any` (default) matches an item carrying any of the tags; `all` requires every one.
+	TagMode *GetItemIndexParamsTagMode `form:"tagMode,omitempty" json:"tagMode,omitempty"`
+
+	// SubjectId Items tagged with this person or pet. This is how "photographs of Grandma" is asked - there is deliberately no `/subjects/{id}/items`, because a second list endpoint would mean a second pagination and filter surface to keep in step.
+	SubjectId   *FilterSubjectId               `form:"subjectId,omitempty" json:"subjectId,omitempty"`
+	SubjectMode *GetItemIndexParamsSubjectMode `form:"subjectMode,omitempty" json:"subjectMode,omitempty"`
+
+	// SubjectKind Items tagged with at least one subject of this kind, e.g. `pet`.
+	SubjectKind *FilterSubjectKind `form:"subjectKind,omitempty" json:"subjectKind,omitempty"`
+	PlaceId     *FilterPlaceId     `form:"placeId,omitempty" json:"placeId,omitempty"`
+
+	// Has Media the item actually holds, not what its type permits - so `has=audio` means something you can really listen to, rather than every CD including the ones that are only photographs of a disc. Several values are AND.
+	Has *FilterHas `form:"has,omitempty" json:"has,omitempty"`
+
+	// From Partial ISO accepted. `1940` means the start of 1940.
+	From *FilterFrom `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Partial ISO accepted. `1950` means the **end** of 1950, not its first instant.
+	To *FilterTo `form:"to,omitempty" json:"to,omitempty"`
+
+	// DateOverlap Default true: an item whose date range intersects the window matches, so a photograph dated 1930-1960 is returned when asking for the 1940s - it genuinely might be the one you want, and strict containment would hide it. Set false to require the item's sort point to fall inside the window instead.
+	DateOverlap *FilterDateOverlap `form:"dateOverlap,omitempty" json:"dateOverlap,omitempty"`
+
+	// HasDate Undated items never satisfy a from/to window, so this is how you reach them - and how the timeline excludes them.
+	HasDate *FilterHasDate `form:"hasDate,omitempty" json:"hasDate,omitempty"`
+
+	// HasGeo Whether the item has coordinates, as opposed to only a place label.
+	HasGeo   *FilterHasGeo   `form:"hasGeo,omitempty" json:"hasGeo,omitempty"`
+	HasFiles *FilterHasFiles `form:"hasFiles,omitempty" json:"hasFiles,omitempty"`
+
+	// Bbox `minLon,minLat,maxLon,maxLat`. A box whose minLon exceeds its maxLon wraps the antimeridian rather than matching nothing, which is what a map panned past 180° sends. Items without coordinates never match.
+	Bbox *FilterBBox             `form:"bbox,omitempty" json:"bbox,omitempty"`
+	Sort *GetItemIndexParamsSort `form:"sort,omitempty" json:"sort,omitempty"`
+
+	// Covers Attach a presigned cover URL to each card.
+	Covers *bool `form:"covers,omitempty" json:"covers,omitempty"`
+}
+
+// GetItemIndexParamsTagMode defines parameters for GetItemIndex.
+type GetItemIndexParamsTagMode string
+
+// GetItemIndexParamsSubjectMode defines parameters for GetItemIndex.
+type GetItemIndexParamsSubjectMode string
+
+// GetItemIndexParamsSort defines parameters for GetItemIndex.
+type GetItemIndexParamsSort string
 
 // DeleteItemParams defines parameters for DeleteItem.
 type DeleteItemParams struct {

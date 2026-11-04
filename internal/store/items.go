@@ -15,24 +15,15 @@ import (
 	"github.com/jfortner8/archive-api/internal/store/dynamo"
 )
 
-// ListOptions controls a page of items.
-type ListOptions struct {
-	Limit  int
-	Cursor string
-
-	// FilterHash fingerprints the filters this page was produced under, and
-	// is checked when the cursor comes back. Callers with no filters pass "".
-	FilterHash string
-
-	// Ascending walks oldest-first. The default is newest-first, matching the
-	// timeline's own default.
-	Ascending bool
-}
-
 // ItemPage is one page of cards plus the cursor for the next.
 type ItemPage struct {
 	Items      []domain.ItemCard
 	NextCursor string
+
+	// Total is how many cards match the filter, not how many are on this
+	// page. Cheap to report because the filter already ran over the whole
+	// spine, and it is what lets a UI say "61 of 340".
+	Total int
 }
 
 // CreateItem writes a new item, failing if one already exists at that id.
@@ -89,58 +80,6 @@ func (s *Store) GetItem(ctx context.Context, archive domain.ArchiveID, id domain
 		return domain.Item{}, ErrNotFound
 	}
 	return unmarshalItem(out.Item)
-}
-
-// ListItems returns a page of cards, newest first by default.
-//
-// This Queries the secondary index rather than scanning the table. The old
-// implementation read every row in the table and discarded the ones belonging
-// to other accounts - and, because it never passed on DynamoDB's
-// LastEvaluatedKey, silently stopped at the first megabyte. Past a few hundred
-// items, photographs simply went missing with no error anywhere.
-func (s *Store) ListItems(ctx context.Context, archive domain.ArchiveID, opts ListOptions) (ItemPage, error) {
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = defaultPageLimit
-	}
-	if limit > maxPageLimit {
-		limit = maxPageLimit
-	}
-
-	startKey, err := decodeCursor(opts.Cursor, opts.FilterHash)
-	if err != nil {
-		return ItemPage{}, err
-	}
-
-	out, err := s.client.Query(ctx, &dynamodb.QueryInput{
-		TableName:              &s.table,
-		IndexName:              aws.String(dynamo.GSI1Name),
-		KeyConditionExpression: aws.String("gsi1pk = :pk"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":pk": &types.AttributeValueMemberS{Value: dynamo.ItemIndexPK(archive)},
-		},
-		ScanIndexForward:  aws.Bool(opts.Ascending),
-		Limit:             aws.Int32(int32(limit)),
-		ExclusiveStartKey: startKey,
-	})
-	if err != nil {
-		return ItemPage{}, fmt.Errorf("list items: %w", err)
-	}
-
-	page := ItemPage{Items: make([]domain.ItemCard, 0, len(out.Items))}
-	for _, av := range out.Items {
-		card, err := unmarshalCard(av)
-		if err != nil {
-			return ItemPage{}, err
-		}
-		page.Items = append(page.Items, card)
-	}
-
-	page.NextCursor, err = encodeCursor(opts.FilterHash, out.LastEvaluatedKey)
-	if err != nil {
-		return ItemPage{}, err
-	}
-	return page, nil
 }
 
 // PatchItem applies a partial metadata update.
@@ -415,4 +354,35 @@ func fillIdentity(card *domain.ItemCard, av map[string]types.AttributeValue) err
 	card.ArchiveID = archiveID
 	card.ID = itemID
 	return nil
+}
+
+// SetFileDerivatives records what the derivative pipeline produced.
+//
+// Called by the derive Lambda rather than by a request, which is why it takes
+// ids parsed from an S3 key instead of a validated request body. Status moves
+// to ready on success and failed otherwise, so a client can render a
+// placeholder rather than a broken image during the gap - and can tell "not
+// yet" from "never".
+func (s *Store) SetFileDerivatives(
+	ctx context.Context,
+	archive domain.ArchiveID,
+	id domain.ItemID,
+	fileID domain.FileID,
+	width, height int,
+	variants []domain.FileVariant,
+	status domain.FileStatus,
+) (domain.Item, error) {
+	return s.mutateItem(ctx, archive, id, nil, func(item *domain.Item) error {
+		for idx := range item.Files {
+			if item.Files[idx].ID != fileID {
+				continue
+			}
+			item.Files[idx].Width = width
+			item.Files[idx].Height = height
+			item.Files[idx].Variants = variants
+			item.Files[idx].Status = status
+			return nil
+		}
+		return ErrNotFound
+	})
 }

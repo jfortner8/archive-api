@@ -12,6 +12,7 @@ import (
 	"github.com/jfortner8/archive-api/internal/domain/itemtypes"
 	"github.com/jfortner8/archive-api/internal/domain/subjecttypes"
 	"github.com/jfortner8/archive-api/internal/store"
+	"github.com/jfortner8/archive-api/internal/store/dynamo"
 )
 
 // fakeStore is an in-memory stand-in for the data layer.
@@ -35,6 +36,11 @@ type fakeStore struct {
 	// failNextWith, when set, is returned by the next store call. Used to
 	// check how handlers map store errors onto responses.
 	failNextWith error
+
+	// lastQuery is the most recent list query, so a test can assert what the
+	// handler parsed out of a query string rather than inferring it from the
+	// cards that came back.
+	lastQuery store.ListQuery
 }
 
 func newFakeStore() *fakeStore {
@@ -125,9 +131,12 @@ func (f *fakeStore) GetItem(_ context.Context, archive domain.ArchiveID, id doma
 	return item, nil
 }
 
-func (f *fakeStore) ListItems(_ context.Context, archive domain.ArchiveID, opts store.ListOptions) (store.ItemPage, error) {
+// Spine orders by the real index sort key rather than something convenient,
+// because store.Paginate seeks by that key: a fake ordered by title would
+// page against one ordering and seek against another, skipping rows.
+func (f *fakeStore) Spine(_ context.Context, archive domain.ArchiveID, ascending bool) ([]domain.ItemCard, error) {
 	if err := f.take(); err != nil {
-		return store.ItemPage{}, err
+		return nil, err
 	}
 
 	f.mu.Lock()
@@ -138,12 +147,42 @@ func (f *fakeStore) ListItems(_ context.Context, archive domain.ArchiveID, opts 
 		cards = append(cards, item.ItemCard)
 	}
 	sort.Slice(cards, func(i, j int) bool {
-		if opts.Ascending {
-			return cards[i].Title < cards[j].Title
+		a, b := dynamo.ItemIndexSK(&cards[i]), dynamo.ItemIndexSK(&cards[j])
+		if ascending {
+			return a < b
 		}
-		return cards[i].Title > cards[j].Title
+		return a > b
 	})
-	return store.ItemPage{Items: cards}, nil
+	return cards, nil
+}
+
+func (f *fakeStore) FilterSpine(ctx context.Context, archive domain.ArchiveID, filter domain.Filter, ascending bool) ([]domain.ItemCard, error) {
+	cards, err := f.Spine(ctx, archive, ascending)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]domain.ItemCard, 0, len(cards))
+	for i := range cards {
+		if filter.Matches(&cards[i]) {
+			kept = append(kept, cards[i])
+		}
+	}
+	return kept, nil
+}
+
+// ListItems pages with the real store's own Paginate, so cursors handed out
+// here are the production encoding and a handler test walking pages exercises
+// the real cursor validation rather than a lookalike.
+func (f *fakeStore) ListItems(ctx context.Context, archive domain.ArchiveID, q store.ListQuery) (store.ItemPage, error) {
+	f.mu.Lock()
+	f.lastQuery = q
+	f.mu.Unlock()
+
+	matching, err := f.FilterSpine(ctx, archive, q.Filter, q.Ascending)
+	if err != nil {
+		return store.ItemPage{}, err
+	}
+	return store.Paginate(matching, q)
 }
 
 func (f *fakeStore) PatchItem(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, patch domain.ItemPatch, ifVersion *int64) (domain.Item, error) {

@@ -1,4 +1,4 @@
-.PHONY: build run test test-integration lint tidy generate docs docs-lint dev-up dev-down dev-setup
+.PHONY: build build-lambda build-derive run test test-integration lint tidy generate docs docs-lint dev-up dev-down dev-setup
 
 build:
 	go build -o bin/api ./cmd/api
@@ -12,8 +12,19 @@ build-lambda:
 	powershell -NoProfile -Command "Compress-Archive -Path bootstrap -DestinationPath lambda.zip -Force"
 	rm -f bootstrap
 
+# The derivative function is a second binary from the same module, so it
+# shares every domain rule - the item model, validation, the cover
+# preference - rather than reimplementing them against the same table.
+build-derive:
+	GOOS=linux GOARCH=arm64 go build -o bootstrap ./cmd/derive
+	powershell -NoProfile -Command "Compress-Archive -Path bootstrap -DestinationPath derive.zip -Force"
+	rm -f bootstrap
+
 deploy-lambda: build-lambda
 	aws lambda update-function-code --function-name archive-api --zip-file fileb://lambda.zip
+
+deploy-derive: build-derive
+	aws lambda update-function-code --function-name archive-api-derive --zip-file fileb://derive.zip
 
 run:
 	go run ./cmd/api

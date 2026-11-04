@@ -17,7 +17,13 @@ import (
 type itemStore interface {
 	CreateItem(ctx context.Context, item *domain.Item) error
 	GetItem(ctx context.Context, archive domain.ArchiveID, id domain.ItemID) (domain.Item, error)
-	ListItems(ctx context.Context, archive domain.ArchiveID, opts store.ListOptions) (store.ItemPage, error)
+	ListItems(ctx context.Context, archive domain.ArchiveID, q store.ListQuery) (store.ItemPage, error)
+
+	// Spine is every card in an archive; FilterSpine is the matching subset.
+	// Both exist because the timeline and the map need the whole set at once,
+	// and because facet counts have to see cards the current filter excludes.
+	Spine(ctx context.Context, archive domain.ArchiveID, ascending bool) ([]domain.ItemCard, error)
+	FilterSpine(ctx context.Context, archive domain.ArchiveID, filter domain.Filter, ascending bool) ([]domain.ItemCard, error)
 	PatchItem(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, patch domain.ItemPatch, ifVersion *int64) (domain.Item, error)
 	DeleteItem(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, ifVersion *int64) error
 	AppendFile(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, file domain.File) (domain.Item, error)
@@ -112,6 +118,8 @@ func (s *Server) v1Routes() []route {
 		{"DELETE", "/v1/archives/{archiveId}/members/{accountId}", s.removeMember, true},
 
 		{"GET", "/v1/archives/{archiveId}/items", s.listItems, true},
+		{"GET", "/v1/archives/{archiveId}/items/index", s.getItemIndex, true},
+		{"GET", "/v1/archives/{archiveId}/items/facets", s.getItemFacets, true},
 		{"POST", "/v1/archives/{archiveId}/items", s.createItem, true},
 		{"GET", "/v1/archives/{archiveId}/items/{itemId}", s.getItem, true},
 		{"PATCH", "/v1/archives/{archiveId}/items/{itemId}", s.patchItem, true},

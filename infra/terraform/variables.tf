@@ -118,3 +118,14 @@ variable "github_repository" {
   type        = string
   default     = "jfortner8/archive-api"
 }
+
+variable "derive_memory_mb" {
+  description = <<-EOT
+    Memory for the derivative function. Decoding a 20-megapixel image to RGBA
+    is around 80 MB before any resizing, and Lambda scales CPU with memory, so
+    this buys speed as much as headroom. Nobody waits on these invocations,
+    but a slow one costs the same per millisecond as a fast one.
+  EOT
+  type        = number
+  default     = 1024
+}

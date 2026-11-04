@@ -49,6 +49,30 @@ type File struct {
 
 	Status     FileStatus `json:"status" dynamodbav:"status"`
 	UploadedAt time.Time  `json:"uploadedAt" dynamodbav:"uploadedAt"`
+
+	// Variants are the generated sizes, smallest first. Absent until the
+	// derivative pipeline has run, and absent permanently for a format
+	// nothing can decode - so a client picks the smallest variant at least as
+	// large as it needs and falls back to the original, rather than assuming
+	// any particular rung exists.
+	Variants []FileVariant `json:"variants,omitempty" dynamodbav:"variants,omitempty"`
+}
+
+// FileVariant is one generated size of a file.
+type FileVariant struct {
+	// Name is the rung: thumb, card or full.
+	Name string `json:"name" dynamodbav:"name"`
+
+	// Key is the S3 object. Not serialized - a client gets a presigned url
+	// instead, and the key would tell it nothing it can use.
+	Key string `json:"-" dynamodbav:"key"`
+
+	Width  int   `json:"width" dynamodbav:"width"`
+	Height int   `json:"height" dynamodbav:"height"`
+	Bytes  int64 `json:"sizeBytes" dynamodbav:"sizeBytes"`
+
+	// URL is filled in per response, like a file's own url.
+	URL string `json:"url,omitempty" dynamodbav:"-"`
 }
 
 // SubjectRef is a subject as denormalized onto an item: enough to render a
@@ -214,10 +238,39 @@ func (i *Item) deriveCover(reg *itemtypes.Registry) {
 		return
 	}
 	i.CoverFileID = chosen.ID
+
+	// Point at a derivative when one exists. A gallery tile is around 150
+	// pixels and a timeline thumbnail 112, so serving the original scan
+	// wastes most of what it downloads - and because this reuses the existing
+	// coverKey attribute rather than adding a projected one, it needs no
+	// index rebuild.
+	//
+	// Rungs are tried smallest-usable first, falling through to the original
+	// when derivation has not run, failed, or produced nothing smaller.
 	i.CoverKey = chosen.Key
 	i.CoverContentType = chosen.ContentType
 	i.CoverWidth = chosen.Width
 	i.CoverHeight = chosen.Height
+
+	for _, rung := range []string{"thumb", "card"} {
+		if variant, ok := chosen.Variant(rung); ok {
+			i.CoverKey = variant.Key
+			i.CoverContentType = "image/jpeg"
+			i.CoverWidth = variant.Width
+			i.CoverHeight = variant.Height
+			break
+		}
+	}
+}
+
+// Variant finds one generated size of a file.
+func (f *File) Variant(name string) (FileVariant, bool) {
+	for _, v := range f.Variants {
+		if v.Name == name {
+			return v, true
+		}
+	}
+	return FileVariant{}, false
 }
 
 func (i *Item) findCover(reg *itemtypes.Registry) *File {

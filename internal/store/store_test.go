@@ -165,7 +165,7 @@ func TestItemsAreScopedToTheirArchive(t *testing.T) {
 		t.Errorf("cross-archive get = %v, want ErrNotFound", err)
 	}
 
-	page, err := s.ListItems(ctx, theirs, ListOptions{})
+	page, err := s.ListItems(ctx, theirs, ListQuery{})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestListIsOrderedAndPaginates(t *testing.T) {
 	}
 
 	// Default is newest first, which is what the gallery and timeline expect.
-	page, err := s.ListItems(ctx, archive, ListOptions{Limit: 2})
+	page, err := s.ListItems(ctx, archive, ListQuery{Limit: 2})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestListIsOrderedAndPaginates(t *testing.T) {
 	seen := []string{page.Items[0].Title, page.Items[1].Title}
 	cursor := page.NextCursor
 	for cursor != "" {
-		page, err = s.ListItems(ctx, archive, ListOptions{Limit: 2, Cursor: cursor})
+		page, err = s.ListItems(ctx, archive, ListQuery{Limit: 2, Cursor: cursor})
 		if err != nil {
 			t.Fatalf("list page: %v", err)
 		}
@@ -242,7 +242,7 @@ func TestListIsOrderedAndPaginates(t *testing.T) {
 	}
 
 	// Ascending is the same set in the opposite order.
-	asc, err := s.ListItems(ctx, archive, ListOptions{Ascending: true, Limit: 10})
+	asc, err := s.ListItems(ctx, archive, ListQuery{Ascending: true, Limit: 10})
 	if err != nil {
 		t.Fatalf("list ascending: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestCursorRejectsChangedFilters(t *testing.T) {
 		mustCreate(t, s, archive, newPhoto(fmt.Sprintf("photo %d", i), nil))
 	}
 
-	page, err := s.ListItems(ctx, archive, ListOptions{Limit: 1, FilterHash: "tag=beach"})
+	page, err := s.ListItems(ctx, archive, ListQuery{Limit: 1, Filter: domain.Filter{Q: "beach"}})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -271,16 +271,16 @@ func TestCursorRejectsChangedFilters(t *testing.T) {
 		t.Fatal("expected a cursor")
 	}
 
-	_, err = s.ListItems(ctx, archive, ListOptions{
-		Limit: 1, Cursor: page.NextCursor, FilterHash: "tag=mountains",
+	_, err = s.ListItems(ctx, archive, ListQuery{
+		Limit: 1, Cursor: page.NextCursor, Filter: domain.Filter{Q: "mountains"},
 	})
 	if err != ErrBadCursor {
 		t.Errorf("reused cursor under new filters = %v, want ErrBadCursor", err)
 	}
 
 	// The same filters still work.
-	if _, err := s.ListItems(ctx, archive, ListOptions{
-		Limit: 1, Cursor: page.NextCursor, FilterHash: "tag=beach",
+	if _, err := s.ListItems(ctx, archive, ListQuery{
+		Limit: 1, Cursor: page.NextCursor, Filter: domain.Filter{Q: "beach"},
 	}); err != nil {
 		t.Errorf("same-filter cursor rejected: %v", err)
 	}
