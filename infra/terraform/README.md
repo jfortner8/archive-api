@@ -10,7 +10,9 @@ such change, which is why this landed first.
 
 Managed: the DynamoDB table and its GSI, the S3 bucket (encryption, versioning,
 lifecycle, CORS), the Lambda execution role and policy, the Lambda function's
-*configuration*, its Function URL, and its log group.
+*configuration*, its Function URL, and its log group. Also the public API
+reference site (`docs.tf`): a private S3 bucket behind CloudFront, and the
+GitHub OIDC role that publishes to it from `main`.
 
 Deliberately not managed:
 
@@ -24,6 +26,59 @@ Deliberately not managed:
   partition key to `pk`/`sk`, and DynamoDB cannot alter a key schema in place,
   so this creates a *new* table and leaves the old one alone until you are
   certain it is disposable.
+
+## How changes reach AWS
+
+Plans and applies run in CI, not on anyone's machine.
+
+- **On a pull request**, the `plan` job posts what the change would do as a
+  comment. That comment is the review: read it before merging.
+- **On a merge to `main`**, the `apply` job runs the same plan and applies it,
+  *before* the code deploy, so the table or permission a change needs exists
+  before the code that uses it ships.
+
+CI authenticates with GitHub OIDC rather than a stored key. There are two
+general runner roles, shared by every repository that uses this account:
+
+- `github-actions-runner-read` plans and inspects, for pull requests and main.
+- `github-actions-runner-apply` changes infrastructure, for main only.
+
+They are split because a pull request runs the workflow from its own branch: a
+role that could write and was trusted for pull requests would let anyone able
+to push a branch rewrite the workflow and apply unreviewed.
+
+Which repositories may use each is a list in `variables.tf`
+(`github_runner_read_repos`, `github_runner_apply_repos`), so onboarding another
+repository is one line. Two narrower identities sit beside them:
+`archive-api-ci-docs` can publish one file, and the separate
+`archive-api-ci-deploy` user can only update Lambda code.
+
+The apply job refuses to run if a plan deletes or replaces anything, because
+the table and the media bucket cannot be recovered. A change that genuinely
+needs that is applied by hand, deliberately.
+
+### The one manual apply
+
+CI cannot create the role that gives CI permission to apply, so that role is
+created by hand, once. Everything after it is automatic.
+
+```bash
+terraform -chdir=infra/terraform plan -out=tfplan
+terraform -chdir=infra/terraform apply tfplan
+terraform -chdir=infra/terraform output -raw apply_role_arn
+```
+
+Set that ARN as the `AWS_APPLY_ROLE_ARN` repository **variable** (Settings →
+Secrets and variables → Actions → Variables), and the read role's ARN
+(`runner_read_role_arn`) as `AWS_PLAN_ROLE_ARN`. Until the apply variable
+exists the `apply` job skips itself and deploys continue as before.
+
+### Edits to `apply.tf` are always manual
+
+The apply role is denied permission to change itself, so a change to its own
+policy fails in CI by design and is applied by hand, the same way as the first
+one. A role that could rewrite its own permissions would have none worth
+speaking of.
 
 ## First run
 

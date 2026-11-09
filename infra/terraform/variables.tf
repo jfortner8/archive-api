@@ -110,21 +110,44 @@ variable "media_cors_origins" {
   ]
 }
 
-variable "github_oidc_subject_prefix" {
+variable "github_repo_subjects" {
   description = <<-EOT
-    The front of the `sub` claim GitHub puts in this repository's OIDC tokens,
-    used in the trust condition so only this repository's workflows can assume
-    the read-only plan role.
+    Every repository that may assume a runner role, mapped to the front of the
+    `sub` claim GitHub puts in its OIDC tokens.
 
-    This repository uses GitHub's immutable subject format, which embeds the
-    numeric owner and repository ids rather than their names, so a plain
-    `repo:owner/name` condition never matches and every assumption is refused.
-    Read the real value with:
+    This account uses GitHub's immutable subject format, which embeds numeric
+    owner and repository ids rather than names, so a plain `repo:owner/name`
+    condition never matches and every assumption is refused. Read a repository's
+    real value with:
       gh api repos/OWNER/REPO/actions/oidc/customization/sub
     and use its `sub_claim_prefix`.
+
+    Listing a repository here does not by itself grant anything; it must also
+    appear in one of the two lists below.
   EOT
-  type        = string
-  default     = "repo:jfortner8@160181019/archive-api@1368928181"
+  type        = map(string)
+  default = {
+    "archive-api"   = "repo:jfortner8@160181019/archive-api@1368928181"
+    "archives-ui"   = "repo:jfortner8@160181019/archives-ui@1368556526"
+    "alecita-y-yon" = "repo:jfortner8@160181019/alecita-y-yon@1411948881"
+  }
+}
+
+variable "github_runner_read_repos" {
+  description = "Repositories whose pull requests and main branch may assume github-actions-runner-read."
+  type        = list(string)
+  default     = ["archive-api", "archives-ui", "alecita-y-yon"]
+}
+
+variable "github_runner_apply_repos" {
+  description = <<-EOT
+    Repositories whose main branch may assume github-actions-runner-apply, which
+    can change infrastructure. Keep this to the repositories that actually own
+    Terraform: every entry is a place where a compromised main branch becomes
+    write access to the account.
+  EOT
+  type        = list(string)
+  default     = ["archive-api"]
 }
 
 variable "derive_memory_mb" {
