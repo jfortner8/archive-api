@@ -54,6 +54,33 @@ jobs:
             exit 1
           fi
 
+  # Renders openapi.yaml as a browsable page and attaches it to the run, so a
+  # reviewer or the frontend can read the API a pull request describes without
+  # cloning anything.
+  #
+  # An artifact rather than a committed docs/api.html on purpose: the page is
+  # generated from the spec, so a checked-in copy is a second thing to keep in
+  # step with the first and goes stale the first time someone forgets. This one
+  # is rebuilt from the spec on every run, so it cannot disagree with it.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Render the API reference
+        run: make docs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-reference
+          path: docs/api.html
+          if-no-files-found: error
+          retention-days: 30
+
   # Shows what a change would do to real infrastructure, on the pull request,
   # before it is merged.
   #
