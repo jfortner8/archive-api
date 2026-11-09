@@ -39,8 +39,8 @@ data "aws_iam_policy_document" "github_plan_assume" {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
-        "repo:${var.github_repository}:pull_request",
-        "repo:${var.github_repository}:ref:refs/heads/main",
+        "${var.github_oidc_subject_prefix}:pull_request",
+        "${var.github_oidc_subject_prefix}:ref:refs/heads/main",
       ]
     }
   }

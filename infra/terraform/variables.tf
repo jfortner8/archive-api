@@ -110,13 +110,21 @@ variable "media_cors_origins" {
   ]
 }
 
-variable "github_repository" {
+variable "github_oidc_subject_prefix" {
   description = <<-EOT
-    owner/repo, used in the OIDC trust condition so only this repository's
-    workflows can assume the read-only plan role.
+    The front of the `sub` claim GitHub puts in this repository's OIDC tokens,
+    used in the trust condition so only this repository's workflows can assume
+    the read-only plan role.
+
+    This repository uses GitHub's immutable subject format, which embeds the
+    numeric owner and repository ids rather than their names, so a plain
+    `repo:owner/name` condition never matches and every assumption is refused.
+    Read the real value with:
+      gh api repos/OWNER/REPO/actions/oidc/customization/sub
+    and use its `sub_claim_prefix`.
   EOT
   type        = string
-  default     = "jfortner8/archive-api"
+  default     = "repo:jfortner8@160181019/archive-api@1368928181"
 }
 
 variable "derive_memory_mb" {
