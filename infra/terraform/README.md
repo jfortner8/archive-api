@@ -27,6 +27,47 @@ Deliberately not managed:
   so this creates a *new* table and leaves the old one alone until you are
   certain it is disposable.
 
+## How changes reach AWS
+
+Plans and applies run in CI, not on anyone's machine.
+
+- **On a pull request**, the `plan` job posts what the change would do as a
+  comment. That comment is the review: read it before merging.
+- **On a merge to `main`**, the `apply` job runs the same plan and applies it,
+  *before* the code deploy, so the table or permission a change needs exists
+  before the code that uses it ships.
+
+CI authenticates with GitHub OIDC rather than a stored key. Three roles exist,
+and only `archive-api-ci-apply` can write: `-ci-plan` is read-only, `-ci-docs`
+can publish one file, and the separate `archive-api-ci-deploy` user can only
+update Lambda code.
+
+The apply job refuses to run if a plan deletes or replaces anything, because
+the table and the media bucket cannot be recovered. A change that genuinely
+needs that is applied by hand, deliberately.
+
+### The one manual apply
+
+CI cannot create the role that gives CI permission to apply, so that role is
+created by hand, once. Everything after it is automatic.
+
+```bash
+terraform -chdir=infra/terraform plan -out=tfplan
+terraform -chdir=infra/terraform apply tfplan
+terraform -chdir=infra/terraform output -raw apply_role_arn
+```
+
+Set that ARN as the `AWS_APPLY_ROLE_ARN` repository **variable** (Settings →
+Secrets and variables → Actions → Variables). Until it exists the `apply` job
+skips itself and deploys continue as before.
+
+### Edits to `apply.tf` are always manual
+
+The apply role is denied permission to change itself, so a change to its own
+policy fails in CI by design and is applied by hand, the same way as the first
+one. A role that could rewrite its own permissions would have none worth
+speaking of.
+
 ## First run
 
 ```bash

@@ -233,12 +233,89 @@ jobs:
               });
             }
 
+  # Applies the infrastructure on every merge to main, so no one runs
+  # `terraform apply` by hand. The plan job above is what a reviewer reads
+  # beforehand; this is the same plan, executed.
+  #
+  # It runs before deploy on purpose. The failure that motivated all of this
+  # was code shipping ahead of the table and permissions it needed, and
+  # production returning 500s until someone noticed. Infrastructure first, code
+  # second.
+  #
+  # Skips until AWS_APPLY_ROLE_ARN exists. That role is created by the one
+  # manual apply that bootstraps it, since CI cannot create the role that
+  # grants it the right to apply.
+  apply:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_APPLY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    # Two applies at once would fight over the state lock; queue them instead.
+    concurrency:
+      group: terraform-apply
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.2
+          terraform_wrapper: false
+
+      - name: Init
+        working-directory: infra/terraform
+        run: terraform init -input=false
+
+      - name: Plan
+        working-directory: infra/terraform
+        # Same trick as the plan job: the API key is read from the function it
+        # is already set on, so it never lives in GitHub secrets. Masked first,
+        # so a stray log line cannot print it.
+        run: |
+          KEY="$(aws lambda get-function-configuration \
+            --function-name archive-api \
+            --query 'Environment.Variables.API_KEY' --output text)"
+          echo "::add-mask::$KEY"
+          export TF_VAR_api_key="$KEY"
+          terraform plan -input=false -no-color -out=tfplan
+
+      # An unattended apply must not be able to delete anything. A destroy or a
+      # replacement (which is a destroy followed by a create) is almost always a
+      # mistake in a merged change, and the stateful resources here - the table
+      # and the media bucket - are the ones that cannot be recovered. If a
+      # change really does need one, apply it by hand.
+      - name: Refuse to destroy anything
+        working-directory: infra/terraform
+        run: |
+          if terraform show -json tfplan | jq -e '[.resource_changes[]? | select(.change.actions | index("delete"))] | length > 0' > /dev/null; then
+            echo "::error::This plan deletes or replaces resources. Not applying automatically; review it and apply by hand."
+            terraform show -no-color tfplan | grep -E "^  # |must be replaced|will be destroyed"
+            exit 1
+          fi
+
+      - name: Apply
+        working-directory: infra/terraform
+        run: terraform apply -input=false tfplan
+
   # Deploys to the real Lambda function on every push to main (i.e. every
   # merged PR), using credentials for archive-api-ci-deploy - an IAM user
   # scoped to only updating this one function's code, nothing else.
+  #
+  # Waits for apply when there is one, but a skipped apply (the role not
+  # bootstrapped yet) does not block it.
   deploy:
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, apply]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.apply.result) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
