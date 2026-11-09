@@ -4,6 +4,9 @@ Go backend for archive-ui. Stores item metadata in DynamoDB and files
 (photos, PDFs, etc.) in S3, accessed via presigned URLs so files never
 pass through this service's own request handling.
 
+**[API reference](https://d3450focepv7uq.cloudfront.net)** - every endpoint,
+rendered from `openapi.yaml` and republished on each merge to `main`.
+
 ## Prerequisites
 
 - [Go](https://go.dev/dl/) 1.22+
@@ -78,6 +81,10 @@ Two ways to read and exercise the API:
 `openapi.yaml` is the full contract, and it is the **source**: the Go wire
 types are generated from it with `make generate`, and CI fails if the two
 disagree. Change the spec first.
+
+It is rendered at the [hosted API reference](https://d3450focepv7uq.cloudfront.net),
+which CI rebuilds from the spec on every merge. `make docs` renders the same
+page locally to `docs/api.html`.
 
 Everything except `/healthz` lives under `/v1` and is scoped to an archive.
 
