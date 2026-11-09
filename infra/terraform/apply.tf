@@ -1,4 +1,6 @@
-# The role CI assumes to run `terraform apply` on merges to main.
+# github-actions-runner-apply: the write half of the general runner roles (the
+# read half is in ci.tf). CI assumes it to run `terraform apply` on merges to
+# main, in whichever repositories var.github_runner_apply_repos names.
 #
 # This replaces a human typing apply, so it is the most powerful identity in
 # the account's CI and is built to be as narrow as a role that can write IAM
@@ -7,6 +9,9 @@
 #   - Trusted for runs on main only, never pull requests. Whoever can push to
 #     main can already run any workflow, so the real boundary is who may push
 #     there; protect the branch.
+#   - Its permissions are scoped to this project's resources. A repository that
+#     owns different infrastructure needs statements added here (by hand, since
+#     the role cannot edit itself), not a broader role.
 #   - Every write is scoped to this project's own resources by name prefix. It
 #     cannot touch another bucket, table, function or role in the account.
 #   - It can attach only the two AWS-managed policies this configuration uses,
@@ -38,14 +43,14 @@ data "aws_iam_policy_document" "github_apply_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["${var.github_oidc_subject_prefix}:ref:refs/heads/main"]
+      values   = local.runner_apply_subjects
     }
   }
 }
 
 resource "aws_iam_role" "github_apply" {
-  name                 = "${var.lambda_function_name}-ci-apply"
-  description          = "Runs `terraform apply` on merges to main. Cannot modify itself."
+  name                 = "github-actions-runner-apply"
+  description          = "Applies infrastructure on merges to main in trusted repositories. Cannot modify itself."
   assume_role_policy   = data.aws_iam_policy_document.github_apply_assume.json
   max_session_duration = 3600
 }
@@ -185,6 +190,22 @@ data "aws_iam_policy_document" "github_apply" {
       "iam:ListOpenIDConnectProviderTags",
     ]
     resources = [aws_iam_openid_connect_provider.github.arn]
+  }
+
+  # The runner roles are managed by this configuration but deliberately named
+  # outside the project prefix above, so this role can read them for refresh
+  # and plan and cannot change them. They are edited by a human, like this one.
+  statement {
+    sid = "ReadRunnerRoles"
+    actions = [
+      "iam:GetRole",
+      "iam:GetRolePolicy",
+      "iam:ListRolePolicies",
+      "iam:ListAttachedRolePolicies",
+      "iam:ListRoleTags",
+      "iam:ListInstanceProfilesForRole",
+    ]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/github-actions-runner-*"]
   }
 
   # Refresh needs to read the AWS-managed policy documents it attaches.

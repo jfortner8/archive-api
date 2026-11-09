@@ -37,10 +37,21 @@ Plans and applies run in CI, not on anyone's machine.
   *before* the code deploy, so the table or permission a change needs exists
   before the code that uses it ships.
 
-CI authenticates with GitHub OIDC rather than a stored key. Three roles exist,
-and only `archive-api-ci-apply` can write: `-ci-plan` is read-only, `-ci-docs`
-can publish one file, and the separate `archive-api-ci-deploy` user can only
-update Lambda code.
+CI authenticates with GitHub OIDC rather than a stored key. There are two
+general runner roles, shared by every repository that uses this account:
+
+- `github-actions-runner-read` plans and inspects, for pull requests and main.
+- `github-actions-runner-apply` changes infrastructure, for main only.
+
+They are split because a pull request runs the workflow from its own branch: a
+role that could write and was trusted for pull requests would let anyone able
+to push a branch rewrite the workflow and apply unreviewed.
+
+Which repositories may use each is a list in `variables.tf`
+(`github_runner_read_repos`, `github_runner_apply_repos`), so onboarding another
+repository is one line. Two narrower identities sit beside them:
+`archive-api-ci-docs` can publish one file, and the separate
+`archive-api-ci-deploy` user can only update Lambda code.
 
 The apply job refuses to run if a plan deletes or replaces anything, because
 the table and the media bucket cannot be recovered. A change that genuinely
@@ -58,8 +69,9 @@ terraform -chdir=infra/terraform output -raw apply_role_arn
 ```
 
 Set that ARN as the `AWS_APPLY_ROLE_ARN` repository **variable** (Settings →
-Secrets and variables → Actions → Variables). Until it exists the `apply` job
-skips itself and deploys continue as before.
+Secrets and variables → Actions → Variables), and the read role's ARN
+(`runner_read_role_arn`) as `AWS_PLAN_ROLE_ARN`. Until the apply variable
+exists the `apply` job skips itself and deploys continue as before.
 
 ### Edits to `apply.tf` are always manual
 
