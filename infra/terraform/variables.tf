@@ -127,15 +127,16 @@ variable "github_repo_subjects" {
   EOT
   type        = map(string)
   default = {
-    "archive-api" = "repo:jfortner8@160181019/archive-api@1368928181"
-    "archives-ui" = "repo:jfortner8@160181019/archives-ui@1368556526"
+    "archive-api"   = "repo:jfortner8@160181019/archive-api@1368928181"
+    "archives-ui"   = "repo:jfortner8@160181019/archives-ui@1368556526"
+    "alecita-y-yon" = "repo:jfortner8@160181019/alecita-y-yon@1411948881"
   }
 }
 
 variable "github_runner_read_repos" {
   description = "Repositories whose pull requests and main branch may assume github-actions-runner-read."
   type        = list(string)
-  default     = ["archive-api", "archives-ui"]
+  default     = ["archive-api", "archives-ui", "alecita-y-yon"]
 }
 
 variable "github_runner_apply_repos" {
