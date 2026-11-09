@@ -259,8 +259,10 @@ func TestCursorRejectsChangedFilters(t *testing.T) {
 	ctx := context.Background()
 	archive := domain.NewArchiveID()
 
+	// Every item has to match the filter the first page is fetched under, or
+	// there is no second page and so no cursor to reuse.
 	for i := 0; i < 3; i++ {
-		mustCreate(t, s, archive, newPhoto(fmt.Sprintf("photo %d", i), nil))
+		mustCreate(t, s, archive, newPhoto(fmt.Sprintf("beach %d", i), nil))
 	}
 
 	page, err := s.ListItems(ctx, archive, ListQuery{Limit: 1, Filter: domain.Filter{Q: "beach"}})
