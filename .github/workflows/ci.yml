@@ -81,6 +81,46 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Puts the page the docs job just built on the public docs site, so the
+  # hosted reference always matches the spec that was merged.
+  #
+  # Only on pushes to main: a pull request must never be able to overwrite the
+  # live page, and the AWS role trusts main alone. Skipped until the three
+  # repository variables exist (set them from `terraform output` after the
+  # apply), so merging this ahead of the infrastructure leaves main green
+  # instead of failing on an empty role ARN.
+  publish-docs:
+    needs: docs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_DOCS_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-reference
+          path: docs
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DOCS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # The page is served as index.html so the bare address works. A short
+      # cache lifetime plus an invalidation means a merge shows up in minutes
+      # rather than whenever an edge location next expires it.
+      - name: Publish
+        run: |
+          aws s3 cp docs/api.html "s3://${{ vars.AWS_DOCS_BUCKET }}/index.html" \
+            --content-type "text/html; charset=utf-8" \
+            --cache-control "max-age=300"
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.AWS_DOCS_DISTRIBUTION_ID }}" \
+            --paths "/" "/index.html"
+
   # Shows what a change would do to real infrastructure, on the pull request,
   # before it is merged.
   #

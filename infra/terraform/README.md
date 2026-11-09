@@ -10,7 +10,9 @@ such change, which is why this landed first.
 
 Managed: the DynamoDB table and its GSI, the S3 bucket (encryption, versioning,
 lifecycle, CORS), the Lambda execution role and policy, the Lambda function's
-*configuration*, its Function URL, and its log group.
+*configuration*, its Function URL, and its log group. Also the public API
+reference site (`docs.tf`): a private S3 bucket behind CloudFront, and the
+GitHub OIDC role that publishes to it from `main`.
 
 Deliberately not managed:
 
