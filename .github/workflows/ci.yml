@@ -54,6 +54,118 @@ jobs:
             exit 1
           fi
 
+  # Shows what a change would do to real infrastructure, on the pull request,
+  # before it is merged.
+  #
+  # This exists because of a specific failure: merging the /v1 rework
+  # auto-deployed code that needed a table and IAM policy which did not exist
+  # yet, and nothing anywhere said so. Production returned 500 on every route
+  # that touched data until someone went looking. A plan on that pull request
+  # would have printed "will create aws_dynamodb_table.archive, will update
+  # aws_iam_role_policy" and the ordering would have been obvious.
+  #
+  # It runs on every pull request rather than only on ones touching infra/,
+  # which makes it a drift detector as well: if someone changes something by
+  # hand in the console, the next pull request's plan says so.
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Required to request the OIDC token AWS trusts. This is what replaces a
+      # long-lived access key.
+      id-token: write
+      contents: read
+      # To post the plan as a comment.
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.2
+          terraform_wrapper: false
+
+      - name: Check formatting
+        working-directory: infra/terraform
+        run: terraform fmt -check -recursive
+
+      - name: Init
+        working-directory: infra/terraform
+        run: terraform init -input=false
+
+      - name: Plan
+        id: plan
+        working-directory: infra/terraform
+        # The API key is read from the function it is already set on, rather
+        # than stored as a second copy in GitHub secrets. Without it the plan
+        # would report a spurious change to the Lambda's environment on every
+        # run and nobody would read the output for long.
+        #
+        # -lock=false keeps this a pure read: a plan mutates nothing, and
+        # taking the state lock would need write access to the state bucket.
+        run: |
+          export TF_VAR_api_key="$(aws lambda get-function-configuration \
+            --function-name archive-api \
+            --query 'Environment.Variables.API_KEY' --output text)"
+          terraform plan -input=false -lock=false -no-color > plan.txt 2>&1 || {
+            echo "exit=failed" >> "$GITHUB_OUTPUT"
+            tail -40 plan.txt
+            exit 1
+          }
+          # Trim to the summary and the resource actions; a full plan can run
+          # to hundreds of lines and GitHub truncates long comments.
+          {
+            echo "summary<<PLANEOF"
+            grep -E "^(Plan:|No changes|  # )" plan.txt | head -40
+            echo "PLANEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment the plan on the pull request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = [
+              '<!-- terraform-plan -->',
+              '### Terraform plan',
+              '',
+              '```',
+              `${{ steps.plan.outputs.summary }}`.trim() || 'No changes.',
+              '```',
+              '',
+              '_Read this before merging: infrastructure is applied by hand, so a plan showing additions means someone has to run `terraform apply` before the code that needs them reaches production._',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            // Update the existing comment rather than adding one per push.
+            const existing = comments.find(c => c.body.includes('<!-- terraform-plan -->'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
   # Deploys to the real Lambda function on every push to main (i.e. every
   # merged PR), using credentials for archive-api-ci-deploy - an IAM user
   # scoped to only updating this one function's code, nothing else.
@@ -68,8 +180,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build Lambda package
-        run: GOOS=linux GOARCH=arm64 go build -o bootstrap ./cmd/lambda && zip lambda.zip bootstrap
+      - name: Build Lambda packages
+        run: |
+          GOOS=linux GOARCH=arm64 go build -o bootstrap ./cmd/lambda && zip lambda.zip bootstrap
+          GOOS=linux GOARCH=arm64 go build -o bootstrap ./cmd/derive && zip derive.zip bootstrap
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -83,3 +197,10 @@ jobs:
             --function-name archive-api \
             --zip-file fileb://lambda.zip
           aws lambda wait function-updated --function-name archive-api
+
+          # The derivative function shares this module, so it has to move
+          # with the API rather than drift behind it.
+          aws lambda update-function-code \
+            --function-name archive-api-derive \
+            --zip-file fileb://derive.zip
+          aws lambda wait function-updated --function-name archive-api-derive

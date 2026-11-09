@@ -57,10 +57,11 @@ func newTestServer(t *testing.T) (*Server, *fakeStore) {
 }
 
 type requestOpts struct {
-	token   string
-	body    any
-	ifMatch string
-	noKey   bool
+	token       string
+	body        any
+	ifMatch     string
+	ifNoneMatch string
+	noKey       bool
 }
 
 func do(t *testing.T, s *Server, method, path string, opts requestOpts) *httptest.ResponseRecorder {
@@ -87,6 +88,9 @@ func do(t *testing.T, s *Server, method, path string, opts requestOpts) *httptes
 	}
 	if opts.ifMatch != "" {
 		req.Header.Set("If-Match", opts.ifMatch)
+	}
+	if opts.ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", opts.ifNoneMatch)
 	}
 
 	rec := httptest.NewRecorder()

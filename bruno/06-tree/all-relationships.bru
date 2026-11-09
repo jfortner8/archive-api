@@ -1,0 +1,27 @@
+meta {
+  name: all relationships
+  type: http
+  seq: 8
+}
+
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken:
+  service: lambda
+  region: {{awsRegion}}
+  profileName:
+}
+
+get {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/relationships
+  body: none
+  auth: awsv4
+}
+
+tests {
+  test("lists every edge", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.data).to.have.length.of.at.least(3);
+  });
+}

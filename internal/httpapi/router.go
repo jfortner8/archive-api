@@ -7,6 +7,7 @@ import (
 	"github.com/jfortner8/archive-api/internal/authtoken"
 	"github.com/jfortner8/archive-api/internal/domain"
 	"github.com/jfortner8/archive-api/internal/domain/itemtypes"
+	"github.com/jfortner8/archive-api/internal/domain/subjecttypes"
 	"github.com/jfortner8/archive-api/internal/store"
 )
 
@@ -16,12 +17,35 @@ import (
 type itemStore interface {
 	CreateItem(ctx context.Context, item *domain.Item) error
 	GetItem(ctx context.Context, archive domain.ArchiveID, id domain.ItemID) (domain.Item, error)
-	ListItems(ctx context.Context, archive domain.ArchiveID, opts store.ListOptions) (store.ItemPage, error)
+	ListItems(ctx context.Context, archive domain.ArchiveID, q store.ListQuery) (store.ItemPage, error)
+
+	// Spine is every card in an archive; FilterSpine is the matching subset.
+	// Both exist because the timeline and the map need the whole set at once,
+	// and because facet counts have to see cards the current filter excludes.
+	Spine(ctx context.Context, archive domain.ArchiveID, ascending bool) ([]domain.ItemCard, error)
+	FilterSpine(ctx context.Context, archive domain.ArchiveID, filter domain.Filter, ascending bool) ([]domain.ItemCard, error)
 	PatchItem(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, patch domain.ItemPatch, ifVersion *int64) (domain.Item, error)
 	DeleteItem(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, ifVersion *int64) error
 	AppendFile(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, file domain.File) (domain.Item, error)
 	DeleteFile(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, fileID domain.FileID, ifVersion *int64) (domain.Item, error)
 	ReorderFiles(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, order []domain.FileID, ifVersion *int64) (domain.Item, error)
+}
+
+type subjectStore interface {
+	CreateSubject(ctx context.Context, subject *domain.Subject) error
+	GetSubject(ctx context.Context, archive domain.ArchiveID, id domain.SubjectID) (domain.Subject, error)
+	ListSubjects(ctx context.Context, archive domain.ArchiveID, kind string) ([]domain.Subject, error)
+	PatchSubject(ctx context.Context, archive domain.ArchiveID, id domain.SubjectID, patch domain.SubjectPatch, ifVersion *int64) (domain.Subject, error)
+	DeleteSubject(ctx context.Context, archive domain.ArchiveID, id domain.SubjectID, ifVersion *int64) error
+
+	PutRelationship(ctx context.Context, rel *domain.Relationship) error
+	DeleteRelationship(ctx context.Context, archive domain.ArchiveID, id domain.RelID) error
+	ListRelationships(ctx context.Context, archive domain.ArchiveID) ([]domain.Relationship, error)
+
+	// LoadGraph is two queries and an in-memory build. A graph feature
+	// usually implies a graph database; here every entity in an archive
+	// shares one partition, so it does not.
+	LoadGraph(ctx context.Context, archive domain.ArchiveID) (*domain.Graph, error)
 }
 
 type archiveStore interface {
@@ -50,6 +74,7 @@ type tokenVerifier interface {
 type dataStore interface {
 	itemStore
 	archiveStore
+	subjectStore
 }
 
 // Server holds everything the handlers need.
@@ -58,6 +83,7 @@ type Server struct {
 	Files    presigner
 	Verifier tokenVerifier
 	Types    *itemtypes.Registry
+	Kinds    *subjecttypes.Registry
 
 	// APIKey must match the X-API-Key header on everything except /healthz.
 	APIKey string
@@ -82,6 +108,7 @@ func (s *Server) v1Routes() []route {
 	return []route{
 		{"GET", "/v1/me", s.getMe, false},
 		{"GET", "/v1/item-types", s.listItemTypes, false},
+		{"GET", "/v1/subject-kinds", s.listSubjectKinds, false},
 
 		{"GET", "/v1/archives", s.listArchives, false},
 		{"POST", "/v1/archives", s.createArchive, false},
@@ -91,6 +118,8 @@ func (s *Server) v1Routes() []route {
 		{"DELETE", "/v1/archives/{archiveId}/members/{accountId}", s.removeMember, true},
 
 		{"GET", "/v1/archives/{archiveId}/items", s.listItems, true},
+		{"GET", "/v1/archives/{archiveId}/items/index", s.getItemIndex, true},
+		{"GET", "/v1/archives/{archiveId}/items/facets", s.getItemFacets, true},
 		{"POST", "/v1/archives/{archiveId}/items", s.createItem, true},
 		{"GET", "/v1/archives/{archiveId}/items/{itemId}", s.getItem, true},
 		{"PATCH", "/v1/archives/{archiveId}/items/{itemId}", s.patchItem, true},
@@ -100,6 +129,17 @@ func (s *Server) v1Routes() []route {
 		{"POST", "/v1/archives/{archiveId}/items/{itemId}/files", s.attachFile, true},
 		{"PUT", "/v1/archives/{archiveId}/items/{itemId}/files/order", s.reorderFiles, true},
 		{"DELETE", "/v1/archives/{archiveId}/items/{itemId}/files/{fileId}", s.deleteFile, true},
+
+		{"GET", "/v1/archives/{archiveId}/subjects", s.listSubjects, true},
+		{"POST", "/v1/archives/{archiveId}/subjects", s.createSubject, true},
+		{"GET", "/v1/archives/{archiveId}/subjects/{subjectId}", s.getSubject, true},
+		{"PATCH", "/v1/archives/{archiveId}/subjects/{subjectId}", s.patchSubject, true},
+		{"DELETE", "/v1/archives/{archiveId}/subjects/{subjectId}", s.deleteSubject, true},
+		{"GET", "/v1/archives/{archiveId}/subjects/{subjectId}/tree", s.getSubjectTree, true},
+
+		{"GET", "/v1/archives/{archiveId}/relationships", s.listRelationships, true},
+		{"POST", "/v1/archives/{archiveId}/relationships", s.putRelationship, true},
+		{"DELETE", "/v1/archives/{archiveId}/relationships/{relationshipId}", s.deleteRelationship, true},
 	}
 }
 

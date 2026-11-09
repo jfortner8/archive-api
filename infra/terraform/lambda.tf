@@ -33,12 +33,7 @@ resource "aws_lambda_function" "api" {
 
   timeout = 15
 
-  # The spine endpoint reads and aggregates an entire archive in memory, and
-  # Lambda scales CPU with memory - 512 MB is roughly 4x the CPU of 128 MB for
-  # 4x the per-ms price, which is usually a wash on cost and a large win on
-  # latency for this shape of work. Revisit with real numbers once /items/index
-  # is serving traffic.
-  memory_size = 512
+  memory_size = var.lambda_memory_mb
 
   environment {
     variables = {
@@ -75,4 +70,16 @@ resource "aws_lambda_function" "api" {
 resource "aws_lambda_function_url" "api" {
   function_name      = aws_lambda_function.api.function_name
   authorization_type = "AWS_IAM"
+
+  # Matches what is configured today. It is arguably unnecessary, since the
+  # browser never calls this origin directly - archives-ui reaches it through
+  # its own signing proxy - but tightening it is a separate decision from
+  # adopting the resource, and quietly dropping settings during an import is
+  # how an import breaks something.
+  cors {
+    allow_credentials = false
+    allow_headers     = ["*"]
+    allow_methods     = ["*"]
+    allow_origins     = ["*"]
+  }
 }

@@ -10,21 +10,30 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.60"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 
-  # State lives on disk by default, which is fine while one person deploys
-  # from one machine. Move it to S3 before a second person (or CI) ever runs
-  # `apply`, or you will eventually have two states that disagree about what
-  # exists. The bucket has to be created before this block can point at it,
-  # so it can't be managed by this configuration.
+  # State lives in S3 rather than on one machine. It is the only record of
+  # which real resources this configuration owns, so losing it means Terraform
+  # no longer knows what it manages and a later apply tries to create things
+  # that already exist.
   #
-  # backend "s3" {
-  #   bucket       = "archive-tfstate"
-  #   key          = "archive-api/terraform.tfstate"
-  #   region       = "us-east-1"
-  #   encrypt      = true
-  #   use_lockfile = true
-  # }
+  # The bucket is deliberately not managed here: a configuration cannot hold
+  # the state describing the bucket that holds its own state. It was created
+  # by hand, versioned (so a corrupt state can be rolled back) and private.
+  #
+  # use_lockfile keeps two concurrent applies from interleaving, which replaces
+  # the DynamoDB lock table older setups needed.
+  backend "s3" {
+    bucket       = "archive-api-tfstate-816079797917"
+    key          = "archive-api/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 
 provider "aws" {

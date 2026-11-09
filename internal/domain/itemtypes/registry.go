@@ -170,20 +170,8 @@ func validate(t *Type) error {
 		}
 		seenAttr[attr.ID] = true
 
-		if !knownAttrKinds[attr.Kind] {
-			return fmt.Errorf("type %q: attribute %q: unknown type %q", t.ID, attr.ID, attr.Kind)
-		}
-		if attr.Kind == AttrEnum && len(attr.Options) == 0 {
-			return fmt.Errorf("type %q: attribute %q: enum needs options", t.ID, attr.ID)
-		}
-		if attr.Kind != AttrEnum && len(attr.Options) > 0 {
-			return fmt.Errorf("type %q: attribute %q: options only apply to an enum", t.ID, attr.ID)
-		}
-		if (attr.Min != nil || attr.Max != nil) && attr.Kind != AttrInteger && attr.Kind != AttrNumber {
-			return fmt.Errorf("type %q: attribute %q: min/max only apply to a number", t.ID, attr.ID)
-		}
-		if attr.Min != nil && attr.Max != nil && *attr.Min > *attr.Max {
-			return fmt.Errorf("type %q: attribute %q: min is greater than max", t.ID, attr.ID)
+		if err := ValidateAttributeDecl(attr); err != nil {
+			return fmt.Errorf("type %q: attribute %q: %w", t.ID, attr.ID, err)
 		}
 	}
 
@@ -279,4 +267,29 @@ func isKnownFamily(fam MediaFamily) bool {
 		}
 	}
 	return false
+}
+
+// ValidateAttributeDecl checks one attribute declaration. Exported because
+// subject kinds declare attributes too, and the rules are the same whether
+// the thing being described is a CD or a dog.
+func ValidateAttributeDecl(attr *Attribute) error {
+	if attr.Label == "" {
+		return fmt.Errorf("label is required")
+	}
+	if !knownAttrKinds[attr.Kind] {
+		return fmt.Errorf("unknown type %q", attr.Kind)
+	}
+	if attr.Kind == AttrEnum && len(attr.Options) == 0 {
+		return fmt.Errorf("enum needs options")
+	}
+	if attr.Kind != AttrEnum && len(attr.Options) > 0 {
+		return fmt.Errorf("options only apply to an enum")
+	}
+	if (attr.Min != nil || attr.Max != nil) && attr.Kind != AttrInteger && attr.Kind != AttrNumber {
+		return fmt.Errorf("min/max only apply to a number")
+	}
+	if attr.Min != nil && attr.Max != nil && *attr.Min > *attr.Max {
+		return fmt.Errorf("min is greater than max")
+	}
+	return nil
 }

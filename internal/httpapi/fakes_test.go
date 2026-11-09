@@ -10,7 +10,9 @@ import (
 	"github.com/jfortner8/archive-api/internal/authtoken"
 	"github.com/jfortner8/archive-api/internal/domain"
 	"github.com/jfortner8/archive-api/internal/domain/itemtypes"
+	"github.com/jfortner8/archive-api/internal/domain/subjecttypes"
 	"github.com/jfortner8/archive-api/internal/store"
+	"github.com/jfortner8/archive-api/internal/store/dynamo"
 )
 
 // fakeStore is an in-memory stand-in for the data layer.
@@ -25,12 +27,20 @@ type fakeStore struct {
 	archives map[domain.ArchiveID]domain.Archive
 	members  map[domain.ArchiveID]map[domain.AccountID]domain.Member
 	items    map[domain.ArchiveID]map[domain.ItemID]domain.Item
+	subjects map[domain.ArchiveID]map[domain.SubjectID]domain.Subject
+	rels     map[domain.ArchiveID]map[domain.RelID]domain.Relationship
 
 	types *itemtypes.Registry
+	kinds *subjecttypes.Registry
 
 	// failNextWith, when set, is returned by the next store call. Used to
 	// check how handlers map store errors onto responses.
 	failNextWith error
+
+	// lastQuery is the most recent list query, so a test can assert what the
+	// handler parsed out of a query string rather than inferring it from the
+	// cards that came back.
+	lastQuery store.ListQuery
 }
 
 func newFakeStore() *fakeStore {
@@ -38,7 +48,10 @@ func newFakeStore() *fakeStore {
 		archives: map[domain.ArchiveID]domain.Archive{},
 		members:  map[domain.ArchiveID]map[domain.AccountID]domain.Member{},
 		items:    map[domain.ArchiveID]map[domain.ItemID]domain.Item{},
+		subjects: map[domain.ArchiveID]map[domain.SubjectID]domain.Subject{},
+		rels:     map[domain.ArchiveID]map[domain.RelID]domain.Relationship{},
 		types:    itemtypes.Default,
+		kinds:    subjecttypes.Default,
 	}
 }
 
@@ -118,9 +131,12 @@ func (f *fakeStore) GetItem(_ context.Context, archive domain.ArchiveID, id doma
 	return item, nil
 }
 
-func (f *fakeStore) ListItems(_ context.Context, archive domain.ArchiveID, opts store.ListOptions) (store.ItemPage, error) {
+// Spine orders by the real index sort key rather than something convenient,
+// because store.Paginate seeks by that key: a fake ordered by title would
+// page against one ordering and seek against another, skipping rows.
+func (f *fakeStore) Spine(_ context.Context, archive domain.ArchiveID, ascending bool) ([]domain.ItemCard, error) {
 	if err := f.take(); err != nil {
-		return store.ItemPage{}, err
+		return nil, err
 	}
 
 	f.mu.Lock()
@@ -131,12 +147,42 @@ func (f *fakeStore) ListItems(_ context.Context, archive domain.ArchiveID, opts 
 		cards = append(cards, item.ItemCard)
 	}
 	sort.Slice(cards, func(i, j int) bool {
-		if opts.Ascending {
-			return cards[i].Title < cards[j].Title
+		a, b := dynamo.ItemIndexSK(&cards[i]), dynamo.ItemIndexSK(&cards[j])
+		if ascending {
+			return a < b
 		}
-		return cards[i].Title > cards[j].Title
+		return a > b
 	})
-	return store.ItemPage{Items: cards}, nil
+	return cards, nil
+}
+
+func (f *fakeStore) FilterSpine(ctx context.Context, archive domain.ArchiveID, filter domain.Filter, ascending bool) ([]domain.ItemCard, error) {
+	cards, err := f.Spine(ctx, archive, ascending)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]domain.ItemCard, 0, len(cards))
+	for i := range cards {
+		if filter.Matches(&cards[i]) {
+			kept = append(kept, cards[i])
+		}
+	}
+	return kept, nil
+}
+
+// ListItems pages with the real store's own Paginate, so cursors handed out
+// here are the production encoding and a handler test walking pages exercises
+// the real cursor validation rather than a lookalike.
+func (f *fakeStore) ListItems(ctx context.Context, archive domain.ArchiveID, q store.ListQuery) (store.ItemPage, error) {
+	f.mu.Lock()
+	f.lastQuery = q
+	f.mu.Unlock()
+
+	matching, err := f.FilterSpine(ctx, archive, q.Filter, q.Ascending)
+	if err != nil {
+		return store.ItemPage{}, err
+	}
+	return store.Paginate(matching, q)
 }
 
 func (f *fakeStore) PatchItem(ctx context.Context, archive domain.ArchiveID, id domain.ItemID, patch domain.ItemPatch, ifVersion *int64) (domain.Item, error) {
@@ -391,4 +437,195 @@ func keyPrefix(key string) string {
 		return key[:idx]
 	}
 	return key
+}
+
+// The subject half of the fake. Archive scoping is re-implemented rather than
+// ignored, for the same reason as the item half: the scoping rules are part
+// of what these tests check.
+
+func (f *fakeStore) seedSubject(archive domain.ArchiveID, kind, name string) domain.Subject {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	subject := domain.Subject{
+		ID: domain.NewSubjectID(), ArchiveID: archive,
+		Kind: kind, KindVersion: 1, DisplayName: name, Version: 1,
+		Aliases: []string{},
+	}
+	if f.subjects[archive] == nil {
+		f.subjects[archive] = map[domain.SubjectID]domain.Subject{}
+	}
+	f.subjects[archive][subject.ID] = subject
+	return subject
+}
+
+func (f *fakeStore) CreateSubject(_ context.Context, subject *domain.Subject) error {
+	if err := subject.Validate(f.kinds); err != nil {
+		return err
+	}
+	if err := subject.Normalize(f.kinds); err != nil {
+		return err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	subject.Version = 1
+	if f.subjects[subject.ArchiveID] == nil {
+		f.subjects[subject.ArchiveID] = map[domain.SubjectID]domain.Subject{}
+	}
+	f.subjects[subject.ArchiveID][subject.ID] = *subject
+	return nil
+}
+
+func (f *fakeStore) GetSubject(_ context.Context, archive domain.ArchiveID, id domain.SubjectID) (domain.Subject, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	subject, ok := f.subjects[archive][id]
+	if !ok {
+		return domain.Subject{}, store.ErrNotFound
+	}
+	return subject, nil
+}
+
+func (f *fakeStore) ListSubjects(_ context.Context, archive domain.ArchiveID, kind string) ([]domain.Subject, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := []domain.Subject{}
+	for _, subject := range f.subjects[archive] {
+		if kind != "" && subject.Kind != kind {
+			continue
+		}
+		out = append(out, subject)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].DisplayName < out[j].DisplayName })
+	return out, nil
+}
+
+func (f *fakeStore) PatchSubject(ctx context.Context, archive domain.ArchiveID, id domain.SubjectID, patch domain.SubjectPatch, ifVersion *int64) (domain.Subject, error) {
+	subject, err := f.GetSubject(ctx, archive, id)
+	if err != nil {
+		return domain.Subject{}, err
+	}
+	if ifVersion != nil && *ifVersion != subject.Version {
+		return domain.Subject{}, store.ErrVersionConflict
+	}
+
+	patch.Apply(&subject)
+	subject.Version++
+	if err := subject.Validate(f.kinds); err != nil {
+		return domain.Subject{}, err
+	}
+	if err := subject.Normalize(f.kinds); err != nil {
+		return domain.Subject{}, err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.subjects[archive][id] = subject
+	return subject, nil
+}
+
+func (f *fakeStore) DeleteSubject(ctx context.Context, archive domain.ArchiveID, id domain.SubjectID, ifVersion *int64) error {
+	subject, err := f.GetSubject(ctx, archive, id)
+	if err != nil {
+		return err
+	}
+	if ifVersion != nil && *ifVersion != subject.Version {
+		return store.ErrVersionConflict
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	delete(f.subjects[archive], id)
+	for relID, rel := range f.rels[archive] {
+		if rel.FromID == id || rel.ToID == id {
+			delete(f.rels[archive], relID)
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) PutRelationship(ctx context.Context, rel *domain.Relationship) error {
+	from, err := f.GetSubject(ctx, rel.ArchiveID, rel.FromID)
+	if err != nil {
+		return err
+	}
+	to, err := f.GetSubject(ctx, rel.ArchiveID, rel.ToID)
+	if err != nil {
+		return err
+	}
+	if err := domain.ValidateRelationship(rel, &from, &to); err != nil {
+		return err
+	}
+
+	if rel.Type == domain.RelParent {
+		graph, err := f.LoadGraph(ctx, rel.ArchiveID)
+		if err != nil {
+			return err
+		}
+		if graph.WouldCycle(rel.FromID, rel.ToID) {
+			return domain.ValidationErrors{{
+				Field: "fromSubjectId", Code: "cycle",
+				Message: "this would make someone their own ancestor",
+			}}
+		}
+	}
+
+	rel.ID = domain.RelIDFor(rel.FromID, rel.Type, rel.ToID)
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rels[rel.ArchiveID] == nil {
+		f.rels[rel.ArchiveID] = map[domain.RelID]domain.Relationship{}
+	}
+	f.rels[rel.ArchiveID][rel.ID] = *rel
+	return nil
+}
+
+func (f *fakeStore) DeleteRelationship(_ context.Context, archive domain.ArchiveID, id domain.RelID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if _, ok := f.rels[archive][id]; !ok {
+		return store.ErrNotFound
+	}
+	delete(f.rels[archive], id)
+	return nil
+}
+
+func (f *fakeStore) ListRelationships(_ context.Context, archive domain.ArchiveID) ([]domain.Relationship, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := []domain.Relationship{}
+	for _, rel := range f.rels[archive] {
+		out = append(out, rel)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (f *fakeStore) LoadGraph(ctx context.Context, archive domain.ArchiveID) (*domain.Graph, error) {
+	subjects, err := f.ListSubjects(ctx, archive, "")
+	if err != nil {
+		return nil, err
+	}
+	relationships, err := f.ListRelationships(ctx, archive)
+	if err != nil {
+		return nil, err
+	}
+
+	subjectPtrs := make([]*domain.Subject, 0, len(subjects))
+	for i := range subjects {
+		subjectPtrs = append(subjectPtrs, &subjects[i])
+	}
+	relPtrs := make([]*domain.Relationship, 0, len(relationships))
+	for i := range relationships {
+		relPtrs = append(relPtrs, &relationships[i])
+	}
+	return domain.NewGraph(subjectPtrs, relPtrs), nil
 }

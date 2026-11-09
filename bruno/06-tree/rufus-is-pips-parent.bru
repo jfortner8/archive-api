@@ -1,0 +1,34 @@
+meta {
+  name: Rufus is Pip's parent
+  type: http
+  seq: 2
+}
+
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken:
+  service: lambda
+  region: {{awsRegion}}
+  profileName:
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/relationships
+  body: json
+  auth: awsv4
+}
+
+body:json {
+  {
+    "type": "parent",
+    "fromSubjectId": "{{dogId}}",
+    "toSubjectId": "{{puppyId}}"
+  }
+}
+
+tests {
+  test("pedigrees use the same edge type", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}

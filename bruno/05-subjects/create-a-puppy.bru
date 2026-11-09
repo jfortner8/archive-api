@@ -1,0 +1,38 @@
+meta {
+  name: create a puppy
+  type: http
+  seq: 4
+}
+
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken:
+  service: lambda
+  region: {{awsRegion}}
+  profileName:
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/subjects
+  body: json
+  auth: awsv4
+}
+
+body:json {
+  {
+    "kind": "pet",
+    "displayName": "Pip",
+    "attributes": { "species": "dog", "breed": "Collie" }
+  }
+}
+
+script:post-response {
+  bru.setVar("puppyId", res.body.id);
+}
+
+tests {
+  test("creates the pet", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}

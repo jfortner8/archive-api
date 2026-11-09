@@ -1,0 +1,31 @@
+meta {
+  name: delete the dog
+  type: http
+  seq: 1
+}
+
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken:
+  service: lambda
+  region: {{awsRegion}}
+  profileName:
+}
+
+delete {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/subjects/{{dogId}}
+  body: none
+  auth: awsv4
+}
+
+tests {
+  test("deletes the subject", function () {
+    expect(res.getStatus()).to.equal(204);
+  });
+}
+
+docs {
+  Takes every edge naming the dog with it, so nothing is left pointing at
+  something that no longer exists.
+}

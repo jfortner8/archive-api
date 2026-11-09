@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 
 	"github.com/jfortner8/archive-api/internal/domain"
 	"github.com/jfortner8/archive-api/internal/httpapi/gen"
@@ -19,12 +18,25 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) error {
 		return errInternal()
 	}
 
-	opts, err := parseListOptions(r)
+	filter, err := parseFilterFrom(r, "limit", "cursor", "sort")
+	if err != nil {
+		return err
+	}
+	ascending, err := parseSort(r)
+	if err != nil {
+		return err
+	}
+	limit, err := parseLimit(r)
 	if err != nil {
 		return err
 	}
 
-	page, err := s.Store.ListItems(r.Context(), member.ArchiveID, opts)
+	page, err := s.Store.ListItems(r.Context(), member.ArchiveID, store.ListQuery{
+		Filter:    filter,
+		Limit:     limit,
+		Cursor:    r.URL.Query().Get("cursor"),
+		Ascending: ascending,
+	})
 	if err != nil {
 		return err
 	}
@@ -36,53 +48,24 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) error {
 		cards = append(cards, toGenCard(card, urls))
 	}
 
+	effectiveLimit := limit
+	if effectiveLimit == 0 {
+		effectiveLimit = 60
+	}
+
 	return writeJSON(w, http.StatusOK, struct {
-		Data []gen.ItemCard `json:"data"`
-		Page gen.PageInfo   `json:"page"`
+		Data  []gen.ItemCard `json:"data"`
+		Page  gen.PageInfo   `json:"page"`
+		Total int            `json:"total"`
 	}{
 		Data: cards,
 		Page: gen.PageInfo{
 			Cursor:  optional(page.NextCursor),
 			HasMore: page.NextCursor != "",
-			Limit:   opts.Limit,
+			Limit:   effectiveLimit,
 		},
+		Total: page.Total,
 	})
-}
-
-func parseListOptions(r *http.Request) (store.ListOptions, error) {
-	query := r.URL.Query()
-
-	// An unrecognised parameter is an error rather than something ignored.
-	// A client that misspells a filter should be told, not quietly served
-	// the unfiltered set and left to wonder.
-	for name := range query {
-		switch name {
-		case "limit", "cursor", "sort":
-		default:
-			return store.ListOptions{}, errBadRequest(fmt.Sprintf("unknown query parameter %q", name))
-		}
-	}
-
-	opts := store.ListOptions{Limit: 60}
-
-	if raw := query.Get("limit"); raw != "" {
-		limit, err := strconv.Atoi(raw)
-		if err != nil || limit < 1 || limit > 200 {
-			return store.ListOptions{}, errBadRequest("limit must be between 1 and 200")
-		}
-		opts.Limit = limit
-	}
-
-	switch sort := query.Get("sort"); sort {
-	case "", "date:desc":
-	case "date:asc":
-		opts.Ascending = true
-	default:
-		return store.ListOptions{}, errBadRequest(`sort must be "date:desc" or "date:asc"`)
-	}
-
-	opts.Cursor = query.Get("cursor")
-	return opts, nil
 }
 
 func (s *Server) getItem(w http.ResponseWriter, r *http.Request) error {
@@ -319,14 +302,28 @@ func (s *Server) writeItem(w http.ResponseWriter, r *http.Request, status int, i
 func (s *Server) resolveItemURLs(ctx context.Context, item domain.Item) fileURLs {
 	urls := fileURLs{
 		byFile:    make(map[domain.FileID]string, len(item.Files)),
+		byVariant: make(map[domain.FileID]map[string]string, len(item.Files)),
 		expiresIn: int(storage.DownloadURLExpiry.Seconds()),
 	}
+
 	for _, f := range item.Files {
-		if f.Key == "" {
-			continue
+		if f.Key != "" {
+			if url, err := s.Files.PresignDownload(ctx, f.Key); err == nil {
+				urls.byFile[f.ID] = url
+			}
 		}
-		if url, err := s.Files.PresignDownload(ctx, f.Key); err == nil {
-			urls.byFile[f.ID] = url
+		for _, v := range f.Variants {
+			if v.Key == "" {
+				continue
+			}
+			url, err := s.Files.PresignDownload(ctx, v.Key)
+			if err != nil {
+				continue
+			}
+			if urls.byVariant[f.ID] == nil {
+				urls.byVariant[f.ID] = map[string]string{}
+			}
+			urls.byVariant[f.ID][v.Name] = url
 		}
 	}
 	return urls

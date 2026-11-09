@@ -1,0 +1,41 @@
+meta {
+  name: mother owns Rufus
+  type: http
+  seq: 3
+}
+
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken:
+  service: lambda
+  region: {{awsRegion}}
+  profileName:
+}
+
+post {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/relationships
+  body: json
+  auth: awsv4
+}
+
+body:json {
+  {
+    "type": "owner",
+    "fromSubjectId": "{{motherId}}",
+    "toSubjectId": "{{dogId}}",
+    "start": { "kind": "exact", "date": "1958-06" }
+  }
+}
+
+tests {
+  test("ownership is the one edge that crosses kinds", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.type).to.equal("owner");
+  });
+}
+
+docs {
+  Person to animal, dated - a dog passing from a grandparent to a grandchild
+  is exactly the kind of thing an archive exists to record.
+}

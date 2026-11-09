@@ -1,0 +1,33 @@
+meta {
+  name: upload the bytes
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{uploadUrl}}
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: image/png
+}
+
+tests {
+  test("S3 accepted the object", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Goes straight to S3, not to this API - file bytes never pass through it.
+
+  Two things matter here. `Content-Type` has to match what the presign was
+  asked for, because it is part of what was signed. And this request must not
+  inherit the collection's auth, hence `auth: none`.
+
+  Set the body to a file: **Body -> File**, and pick
+  `bruno/fixtures/sample.png`. Bruno stores that path per machine, so it is
+  not in the committed file.
+}

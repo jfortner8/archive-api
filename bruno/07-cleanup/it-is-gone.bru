@@ -1,0 +1,27 @@
+meta {
+  name: it is gone
+  type: http
+  seq: 4
+}
+
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken:
+  service: lambda
+  region: {{awsRegion}}
+  profileName:
+}
+
+get {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/items/{{itemId}}
+  body: none
+  auth: awsv4
+}
+
+tests {
+  test("and stays gone", function () {
+    expect(res.getStatus()).to.equal(404);
+    expect(res.body.error.code).to.equal("not_found");
+  });
+}

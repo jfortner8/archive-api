@@ -24,7 +24,7 @@ variable "lambda_function_name" {
 variable "s3_bucket_name" {
   description = "Bucket holding originals and derivatives. Globally unique."
   type        = string
-  default     = "archive-prod"
+  default     = "archive-api-816079797917"
 }
 
 variable "dynamodb_table_name" {
@@ -64,6 +64,17 @@ variable "api_key" {
   sensitive   = true
 }
 
+variable "lambda_memory_mb" {
+  description = <<-EOT
+    Lambda scales CPU with memory, so this is a latency/price dial rather than
+    a limit. The spine endpoint reads and aggregates a whole archive in memory
+    and will eventually want more than 128; raise it when there are numbers
+    that say so, not before.
+  EOT
+  type        = number
+  default     = 128
+}
+
 variable "log_retention_days" {
   description = "CloudWatch Logs retention. Lambda's default is never-expire, which quietly accrues cost."
   type        = number
@@ -87,7 +98,42 @@ variable "media_cors_origins" {
     archives-ui runs in the browser. The API itself needs no CORS (it is only
     ever reached server-side through the Next proxy), but these uploads skip
     the proxy entirely.
+
+    Both entries are load-bearing: the deployed frontend is the Vercel one, and
+    removing it would break uploads in production while everything else kept
+    working.
   EOT
   type        = list(string)
-  default     = ["http://localhost:3000"]
+  default = [
+    "http://localhost:3000",
+    "https://archives-ui.vercel.app",
+  ]
+}
+
+variable "github_oidc_subject_prefix" {
+  description = <<-EOT
+    The front of the `sub` claim GitHub puts in this repository's OIDC tokens,
+    used in the trust condition so only this repository's workflows can assume
+    the read-only plan role.
+
+    This repository uses GitHub's immutable subject format, which embeds the
+    numeric owner and repository ids rather than their names, so a plain
+    `repo:owner/name` condition never matches and every assumption is refused.
+    Read the real value with:
+      gh api repos/OWNER/REPO/actions/oidc/customization/sub
+    and use its `sub_claim_prefix`.
+  EOT
+  type        = string
+  default     = "repo:jfortner8@160181019/archive-api@1368928181"
+}
+
+variable "derive_memory_mb" {
+  description = <<-EOT
+    Memory for the derivative function. Decoding a 20-megapixel image to RGBA
+    is around 80 MB before any resizing, and Lambda scales CPU with memory, so
+    this buys speed as much as headroom. Nobody waits on these invocations,
+    but a slow one costs the same per millisecond as a fast one.
+  EOT
+  type        = number
+  default     = 1024
 }

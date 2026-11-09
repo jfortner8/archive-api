@@ -1,0 +1,22 @@
+id: person
+label: Person
+plural: People
+version: 1
+icon: user
+
+# Descriptive only. Nothing here is read by the family tree - a subject's
+# gender does not position it, order it, or constrain who it can be related
+# to. Recording it and building structure on it are different things, and
+# only the first one is wanted.
+attributes:
+  - id: gender
+    label: Gender
+    type: string
+
+  - id: occupation
+    label: Occupation
+    type: string
+
+  - id: birthplace
+    label: Birthplace
+    type: string

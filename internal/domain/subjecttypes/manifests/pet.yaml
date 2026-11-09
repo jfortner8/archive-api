@@ -1,0 +1,24 @@
+id: pet
+label: Pet
+plural: Pets
+version: 1
+icon: paw
+
+attributes:
+  - id: species
+    label: Species
+    type: enum
+    options: [dog, cat, horse, bird, rabbit, fish, reptile, other]
+
+  - id: breed
+    label: Breed
+    type: string
+
+  # Breeders need this for pedigree records. Like a person's gender it is
+  # descriptive: a pedigree chart that wants to label sire and dam reads it
+  # off each parent at render time, and says "parent" when it is unset. The
+  # relationship itself never carries it.
+  - id: sex
+    label: Sex
+    type: enum
+    options: [male, female, unknown]

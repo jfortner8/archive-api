@@ -1,0 +1,12 @@
+vars {
+  ~baseUrl: https://REPLACE-ME.lambda-url.us-east-1.on.aws
+  awsRegion: us-east-1
+  ~awsProfile: 
+}
+
+vars:secret [
+  apiKey,
+  userToken,
+  awsAccessKeyId,
+  awsSecretAccessKey
+]

@@ -1,0 +1,28 @@
+meta {
+  name: subject kinds
+  type: http
+  seq: 3
+}
+
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken:
+  service: lambda
+  region: {{awsRegion}}
+  profileName:
+}
+
+get {
+  url: {{baseUrl}}/v1/subject-kinds
+  body: none
+  auth: awsv4
+}
+
+tests {
+  test("serves person and pet", function () {
+    expect(res.getStatus()).to.equal(200);
+    const ids = res.body.data.map(k => k.id);
+    expect(ids).to.include.members(["person", "pet"]);
+  });
+}

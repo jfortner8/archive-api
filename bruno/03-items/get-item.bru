@@ -1,0 +1,27 @@
+meta {
+  name: get item
+  type: http
+  seq: 3
+}
+
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken:
+  service: lambda
+  region: {{awsRegion}}
+  profileName:
+}
+
+get {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/items/{{itemId}}
+  body: none
+  auth: awsv4
+}
+
+tests {
+  test("returns the full item", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.files).to.be.an("array");
+  });
+}

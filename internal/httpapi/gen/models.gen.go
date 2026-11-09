@@ -77,6 +77,13 @@ const (
 	Ready   FileStatus = "ready"
 )
 
+// Defines values for FileVariantName.
+const (
+	Card  FileVariantName = "card"
+	Full  FileVariantName = "full"
+	Thumb FileVariantName = "thumb"
+)
+
 // Defines values for ItemTypeAttributeType.
 const (
 	Boolean ItemTypeAttributeType = "boolean"
@@ -107,17 +114,104 @@ const (
 	MediaFamilyVideo   MediaFamily = "video"
 )
 
+// Defines values for RelationshipType.
+const (
+	RelationshipTypeLittermate RelationshipType = "littermate"
+	RelationshipTypeOwner      RelationshipType = "owner"
+	RelationshipTypeParent     RelationshipType = "parent"
+	RelationshipTypePartner    RelationshipType = "partner"
+)
+
 // Defines values for Role.
 const (
-	Editor Role = "editor"
-	Owner  Role = "owner"
-	Viewer Role = "viewer"
+	RoleEditor Role = "editor"
+	RoleOwner  Role = "owner"
+	RoleViewer Role = "viewer"
+)
+
+// Defines values for FilterSubjectMode.
+const (
+	FilterSubjectModeAll FilterSubjectMode = "all"
+	FilterSubjectModeAny FilterSubjectMode = "any"
+)
+
+// Defines values for FilterTagMode.
+const (
+	FilterTagModeAll FilterTagMode = "all"
+	FilterTagModeAny FilterTagMode = "any"
+)
+
+// Defines values for SortParam.
+const (
+	SortParamDateAsc  SortParam = "date:asc"
+	SortParamDateDesc SortParam = "date:desc"
 )
 
 // Defines values for ListItemsParamsSort.
 const (
-	DateAsc  ListItemsParamsSort = "date:asc"
-	DateDesc ListItemsParamsSort = "date:desc"
+	ListItemsParamsSortDateAsc  ListItemsParamsSort = "date:asc"
+	ListItemsParamsSortDateDesc ListItemsParamsSort = "date:desc"
+)
+
+// Defines values for ListItemsParamsTagMode.
+const (
+	ListItemsParamsTagModeAll ListItemsParamsTagMode = "all"
+	ListItemsParamsTagModeAny ListItemsParamsTagMode = "any"
+)
+
+// Defines values for ListItemsParamsSubjectMode.
+const (
+	ListItemsParamsSubjectModeAll ListItemsParamsSubjectMode = "all"
+	ListItemsParamsSubjectModeAny ListItemsParamsSubjectMode = "any"
+)
+
+// Defines values for GetItemFacetsParamsTagMode.
+const (
+	GetItemFacetsParamsTagModeAll GetItemFacetsParamsTagMode = "all"
+	GetItemFacetsParamsTagModeAny GetItemFacetsParamsTagMode = "any"
+)
+
+// Defines values for GetItemFacetsParamsSubjectMode.
+const (
+	GetItemFacetsParamsSubjectModeAll GetItemFacetsParamsSubjectMode = "all"
+	GetItemFacetsParamsSubjectModeAny GetItemFacetsParamsSubjectMode = "any"
+)
+
+// Defines values for GetItemFacetsParamsFacets.
+const (
+	GetItemFacetsParamsFacetsCapability  GetItemFacetsParamsFacets = "capability"
+	GetItemFacetsParamsFacetsDateDecade  GetItemFacetsParamsFacets = "date:decade"
+	GetItemFacetsParamsFacetsDateYear    GetItemFacetsParamsFacets = "date:year"
+	GetItemFacetsParamsFacetsPlace       GetItemFacetsParamsFacets = "place"
+	GetItemFacetsParamsFacetsSubject     GetItemFacetsParamsFacets = "subject"
+	GetItemFacetsParamsFacetsSubjectKind GetItemFacetsParamsFacets = "subjectKind"
+	GetItemFacetsParamsFacetsTag         GetItemFacetsParamsFacets = "tag"
+	GetItemFacetsParamsFacetsType        GetItemFacetsParamsFacets = "type"
+)
+
+// Defines values for GetItemIndexParamsTagMode.
+const (
+	GetItemIndexParamsTagModeAll GetItemIndexParamsTagMode = "all"
+	GetItemIndexParamsTagModeAny GetItemIndexParamsTagMode = "any"
+)
+
+// Defines values for GetItemIndexParamsSubjectMode.
+const (
+	GetItemIndexParamsSubjectModeAll GetItemIndexParamsSubjectMode = "all"
+	GetItemIndexParamsSubjectModeAny GetItemIndexParamsSubjectMode = "any"
+)
+
+// Defines values for GetItemIndexParamsSort.
+const (
+	DateAsc  GetItemIndexParamsSort = "date:asc"
+	DateDesc GetItemIndexParamsSort = "date:desc"
+)
+
+// Defines values for GetSubjectTreeParamsDirection.
+const (
+	Ancestors   GetSubjectTreeParamsDirection = "ancestors"
+	Both        GetSubjectTreeParamsDirection = "both"
+	Descendants GetSubjectTreeParamsDirection = "descendants"
 )
 
 // Archive defines model for Archive.
@@ -219,6 +313,27 @@ type Error struct {
 // ErrorCode A closed set, so clients can branch on it.
 type ErrorCode string
 
+// FacetResponse defines model for FacetResponse.
+type FacetResponse struct {
+	// ArchiveTotal Items in the archive at all.
+	ArchiveTotal int `json:"archiveTotal"`
+
+	// Data Counts per requested field, most common first.
+	Data map[string][]FacetValue `json:"data"`
+
+	// Total Items matching the filter in full.
+	Total int `json:"total"`
+}
+
+// FacetValue defines model for FacetValue.
+type FacetValue struct {
+	Count int `json:"count"`
+
+	// Label A readable name where the value is an id, so a filter chip need not be a UUID.
+	Label *string `json:"label,omitempty"`
+	Value string  `json:"value"`
+}
+
 // FieldError defines model for FieldError.
 type FieldError struct {
 	Code    string `json:"code"`
@@ -246,12 +361,31 @@ type File struct {
 	// UrlExpiresIn Seconds.
 	UrlExpiresIn *int `json:"urlExpiresIn,omitempty"`
 
+	// Variants Generated sizes, each with its own presigned url. Absent until the derivative pipeline has run, and absent permanently for a format nothing can decode - notably HEIC, which has no pure-Go decoder.
+	//
+	// So pick the smallest rung at least as large as you need and fall back to `url` (the original) rather than assuming a rung exists. A rung is also omitted when its re-encode would not have been smaller than the original, which guarantees every variant present is a saving.
+	Variants *[]FileVariant `json:"variants,omitempty"`
+
 	// Width Zero until derivatives are generated.
 	Width *int `json:"width,omitempty"`
 }
 
 // FileStatus `pending` between an upload finishing and its derivatives existing. Render a placeholder rather than a broken image.
 type FileStatus string
+
+// FileVariant defines model for FileVariant.
+type FileVariant struct {
+	Height int `json:"height"`
+
+	// Name thumb (400px) suits a timeline strip or a gallery tile at 2x density, card (800px) a larger tile, full (1600px) the lightbox.
+	Name      FileVariantName `json:"name"`
+	SizeBytes int64           `json:"sizeBytes"`
+	Url       *string         `json:"url,omitempty"`
+	Width     int             `json:"width"`
+}
+
+// FileVariantName thumb (400px) suits a timeline strip or a gallery tile at 2x density, card (800px) a larger tile, full (1600px) the lightbox.
+type FileVariantName string
 
 // Item defines model for Item.
 type Item struct {
@@ -359,13 +493,17 @@ type ItemCreate struct {
 type ItemPatch struct {
 	Attributes  *map[string]interface{} `json:"attributes"`
 	CoverFileId *string                 `json:"coverFileId"`
-	Date        *ArchiveDate            `json:"date"`
-	Location    *ArchiveLocation        `json:"location"`
-	Notes       *string                 `json:"notes"`
-	PlaceId     *string                 `json:"placeId"`
-	Subjects    *[]SubjectRef           `json:"subjects"`
-	Tags        *[]string               `json:"tags"`
-	Title       *string                 `json:"title,omitempty"`
+
+	// Date Send `null` to clear the date.
+	Date *ArchiveDate `json:"date,omitempty"`
+
+	// Location Send `null` to clear the location.
+	Location *ArchiveLocation `json:"location,omitempty"`
+	Notes    *string          `json:"notes"`
+	PlaceId  *string          `json:"placeId"`
+	Subjects *[]SubjectRef    `json:"subjects"`
+	Tags     *[]string        `json:"tags"`
+	Title    *string          `json:"title,omitempty"`
 }
 
 // ItemType defines model for ItemType.
@@ -448,8 +586,159 @@ type PageInfo struct {
 	Limit   int     `json:"limit"`
 }
 
+// Relationship defines model for Relationship.
+type Relationship struct {
+	// End When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	End           *ArchiveDate `json:"end,omitempty"`
+	FromSubjectId string       `json:"fromSubjectId"`
+
+	// Id Derived from the endpoints and the type, so recording the same fact twice records it once.
+	Id    string  `json:"id"`
+	Notes *string `json:"notes,omitempty"`
+
+	// Start When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	Start       *ArchiveDate `json:"start,omitempty"`
+	ToSubjectId string       `json:"toSubjectId"`
+
+	// Type `parent` runs from parent to child and is the only edge that forms descent. `partner` is symmetric and entirely independent of it - people marry and have no children, and have children without marrying. `owner` runs from a person to an animal. `littermate` is symmetric, between animals.
+	Type RelationshipType `json:"type"`
+}
+
+// RelationshipCreate defines model for RelationshipCreate.
+type RelationshipCreate struct {
+	// End When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	End           *ArchiveDate `json:"end,omitempty"`
+	FromSubjectId string       `json:"fromSubjectId"`
+	Notes         *string      `json:"notes,omitempty"`
+
+	// Start When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	Start       *ArchiveDate `json:"start,omitempty"`
+	ToSubjectId string       `json:"toSubjectId"`
+
+	// Type `parent` runs from parent to child and is the only edge that forms descent. `partner` is symmetric and entirely independent of it - people marry and have no children, and have children without marrying. `owner` runs from a person to an animal. `littermate` is symmetric, between animals.
+	Type RelationshipType `json:"type"`
+}
+
+// RelationshipType `parent` runs from parent to child and is the only edge that forms descent. `partner` is symmetric and entirely independent of it - people marry and have no children, and have children without marrying. `owner` runs from a person to an animal. `littermate` is symmetric, between animals.
+type RelationshipType string
+
 // Role defines model for Role.
 type Role string
+
+// Subject Whoever or whatever a record is about. People and pets are one entity with a kind rather than two parallel ones - what they share is the part that would otherwise multiply with every new kind: one tag list on items, one filter, one index attribute.
+type Subject struct {
+	Aliases   []string `json:"aliases"`
+	ArchiveId string   `json:"archiveId"`
+
+	// Attributes What this kind declares - a person's gender, a pet's species and breed. Descriptive only; nothing here is read by the family tree.
+	Attributes *map[string]interface{} `json:"attributes,omitempty"`
+
+	// Birth When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	Birth *ArchiveDate `json:"birth,omitempty"`
+
+	// BirthNormalized Server-derived, so clients never parse dates and ordering is a guarantee rather than something each client recomputes. `dateSort` is the midpoint of the span for every kind, so a wide range no longer claims to be as old as its earliest possible day.
+	BirthNormalized *DateNormalized `json:"birthNormalized,omitempty"`
+
+	// CoverItemId The item used as this subject's portrait.
+	CoverItemId *string   `json:"coverItemId,omitempty"`
+	CoverUrl    *string   `json:"coverUrl,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+
+	// Death When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	Death *ArchiveDate `json:"death,omitempty"`
+
+	// DeathNormalized Server-derived, so clients never parse dates and ordering is a guarantee rather than something each client recomputes. `dateSort` is the midpoint of the span for every kind, so a wide range no longer claims to be as old as its earliest possible day.
+	DeathNormalized *DateNormalized `json:"deathNormalized,omitempty"`
+
+	// DisplayName What appears on a caption and a tree node. Separate from the name parts, because an archive is full of subjects whose full name nobody knows.
+	DisplayName string    `json:"displayName"`
+	FamilyName  *string   `json:"familyName,omitempty"`
+	GivenNames  *string   `json:"givenNames,omitempty"`
+	Id          string    `json:"id"`
+	Kind        string    `json:"kind"`
+	KindVersion int       `json:"kindVersion"`
+	Notes       *string   `json:"notes,omitempty"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// SubjectCreate defines model for SubjectCreate.
+type SubjectCreate struct {
+	Aliases    *[]string               `json:"aliases,omitempty"`
+	Attributes *map[string]interface{} `json:"attributes,omitempty"`
+
+	// Birth When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	Birth       *ArchiveDate `json:"birth,omitempty"`
+	CoverItemId *string      `json:"coverItemId,omitempty"`
+
+	// Death When something happened, which is very often not a single known day.
+	//
+	// Modelled as one flat object with a `kind` discriminator rather than a `oneOf`, because the branch rules are clearer as prose plus server-side validation than as generated union types no client library handles pleasantly.
+	//
+	// `date`, `start` and `end` accept **partial ISO** - `1952`, `1952-06` or `1952-06-15`. A bare year means the whole year, not the first of January.
+	Death       *ArchiveDate `json:"death,omitempty"`
+	DisplayName string       `json:"displayName"`
+	FamilyName  *string      `json:"familyName,omitempty"`
+	GivenNames  *string      `json:"givenNames,omitempty"`
+	Kind        string       `json:"kind"`
+	Notes       *string      `json:"notes,omitempty"`
+}
+
+// SubjectKind defines model for SubjectKind.
+type SubjectKind struct {
+	Attributes *[]ItemTypeAttribute `json:"attributes,omitempty"`
+	Icon       *string              `json:"icon,omitempty"`
+	Id         string               `json:"id"`
+	Label      string               `json:"label"`
+
+	// Plural What a nav tab says. Declared rather than derived, because English pluralisation is not a rule.
+	Plural  string `json:"plural"`
+	Version int    `json:"version"`
+}
+
+// SubjectPatch Absent fields are left alone; fields sent as `null` are cleared.
+type SubjectPatch struct {
+	Aliases    *[]string               `json:"aliases"`
+	Attributes *map[string]interface{} `json:"attributes"`
+
+	// Birth Send `null` to clear the birth date.
+	Birth       *ArchiveDate `json:"birth,omitempty"`
+	CoverItemId *string      `json:"coverItemId"`
+
+	// Death Send `null` to clear the death date.
+	Death       *ArchiveDate `json:"death,omitempty"`
+	DisplayName *string      `json:"displayName,omitempty"`
+	FamilyName  *string      `json:"familyName"`
+	GivenNames  *string      `json:"givenNames"`
+	Notes       *string      `json:"notes"`
+}
 
 // SubjectRef A person or a pet tagged in this item, denormalized so a gallery tile needs no second lookup. One list rather than separate people and animal lists, so filters and indexes do not multiply with each new kind of subject.
 type SubjectRef struct {
@@ -458,14 +747,75 @@ type SubjectRef struct {
 	Name string `json:"name"`
 }
 
+// SubjectTree A flat graph. Nodes appear exactly once however many paths reach them, and every edge whose both ends are present is included, so the client can draw the connections without anything dangling.
+type SubjectTree struct {
+	Edges  []Relationship `json:"edges"`
+	Nodes  []Subject      `json:"nodes"`
+	RootId string         `json:"rootId"`
+}
+
 // ArchiveId defines model for ArchiveId.
 type ArchiveId = string
+
+// FilterBBox defines model for FilterBBox.
+type FilterBBox = string
+
+// FilterDateOverlap defines model for FilterDateOverlap.
+type FilterDateOverlap = bool
+
+// FilterFrom defines model for FilterFrom.
+type FilterFrom = string
+
+// FilterHas defines model for FilterHas.
+type FilterHas = []MediaFamily
+
+// FilterHasDate defines model for FilterHasDate.
+type FilterHasDate = bool
+
+// FilterHasFiles defines model for FilterHasFiles.
+type FilterHasFiles = bool
+
+// FilterHasGeo defines model for FilterHasGeo.
+type FilterHasGeo = bool
+
+// FilterPlaceId defines model for FilterPlaceId.
+type FilterPlaceId = []string
+
+// FilterQ defines model for FilterQ.
+type FilterQ = string
+
+// FilterSubjectId defines model for FilterSubjectId.
+type FilterSubjectId = []string
+
+// FilterSubjectKind defines model for FilterSubjectKind.
+type FilterSubjectKind = []string
+
+// FilterSubjectMode defines model for FilterSubjectMode.
+type FilterSubjectMode string
+
+// FilterTag defines model for FilterTag.
+type FilterTag = []string
+
+// FilterTagMode defines model for FilterTagMode.
+type FilterTagMode string
+
+// FilterTo defines model for FilterTo.
+type FilterTo = string
+
+// FilterTypeId defines model for FilterTypeId.
+type FilterTypeId = []string
 
 // IfMatch defines model for IfMatch.
 type IfMatch = string
 
 // ItemId defines model for ItemId.
 type ItemId = string
+
+// SortParam defines model for SortParam.
+type SortParam string
+
+// SubjectId defines model for SubjectId.
+type SubjectId = string
 
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
@@ -498,12 +848,183 @@ type ListItemsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Cursor From a previous response's `page.cursor`. Opaque, and tied to the filters it was produced under - reusing one after changing a filter is rejected rather than silently answering the old query.
+	//
+	// Keyset rather than an offset, so it does not shift under an insert: the client holds an index into this ordering to drive arrow-key navigation, and that has to stay stable.
 	Cursor *string              `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Sort   *ListItemsParamsSort `form:"sort,omitempty" json:"sort,omitempty"`
+
+	// Q Case-insensitive substring over title, tags and subject names.
+	//
+	// Not notes - the field a searcher most often means. Notes is not carried in the secondary index these projections read, and adding it means rebuilding the index. Not relevance ranking, stemming or typo tolerance either; at a few thousand items this finds what you meant far more often than it misses.
+	Q *FilterQ `form:"q,omitempty" json:"q,omitempty"`
+
+	// TypeId Repeatable or comma-separated. Several values are OR.
+	TypeId *FilterTypeId `form:"typeId,omitempty" json:"typeId,omitempty"`
+
+	// Tag Repeatable or comma-separated. Matched case-insensitively.
+	Tag *FilterTag `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// TagMode `any` (default) matches an item carrying any of the tags; `all` requires every one.
+	TagMode *ListItemsParamsTagMode `form:"tagMode,omitempty" json:"tagMode,omitempty"`
+
+	// SubjectId Items tagged with this person or pet. This is how "photographs of Grandma" is asked - there is deliberately no `/subjects/{id}/items`, because a second list endpoint would mean a second pagination and filter surface to keep in step.
+	SubjectId   *FilterSubjectId            `form:"subjectId,omitempty" json:"subjectId,omitempty"`
+	SubjectMode *ListItemsParamsSubjectMode `form:"subjectMode,omitempty" json:"subjectMode,omitempty"`
+
+	// SubjectKind Items tagged with at least one subject of this kind, e.g. `pet`.
+	SubjectKind *FilterSubjectKind `form:"subjectKind,omitempty" json:"subjectKind,omitempty"`
+	PlaceId     *FilterPlaceId     `form:"placeId,omitempty" json:"placeId,omitempty"`
+
+	// Has Media the item actually holds, not what its type permits - so `has=audio` means something you can really listen to, rather than every CD including the ones that are only photographs of a disc. Several values are AND.
+	Has *FilterHas `form:"has,omitempty" json:"has,omitempty"`
+
+	// From Partial ISO accepted. `1940` means the start of 1940.
+	From *FilterFrom `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Partial ISO accepted. `1950` means the **end** of 1950, not its first instant.
+	To *FilterTo `form:"to,omitempty" json:"to,omitempty"`
+
+	// DateOverlap Default true: an item whose date range intersects the window matches, so a photograph dated 1930-1960 is returned when asking for the 1940s - it genuinely might be the one you want, and strict containment would hide it. Set false to require the item's sort point to fall inside the window instead.
+	DateOverlap *FilterDateOverlap `form:"dateOverlap,omitempty" json:"dateOverlap,omitempty"`
+
+	// HasDate Undated items never satisfy a from/to window, so this is how you reach them - and how the timeline excludes them.
+	HasDate *FilterHasDate `form:"hasDate,omitempty" json:"hasDate,omitempty"`
+
+	// HasGeo Whether the item has coordinates, as opposed to only a place label.
+	HasGeo   *FilterHasGeo   `form:"hasGeo,omitempty" json:"hasGeo,omitempty"`
+	HasFiles *FilterHasFiles `form:"hasFiles,omitempty" json:"hasFiles,omitempty"`
+
+	// Bbox `minLon,minLat,maxLon,maxLat`. A box whose minLon exceeds its maxLon wraps the antimeridian rather than matching nothing, which is what a map panned past 180° sends. Items without coordinates never match.
+	Bbox *FilterBBox `form:"bbox,omitempty" json:"bbox,omitempty"`
 }
 
 // ListItemsParamsSort defines parameters for ListItems.
 type ListItemsParamsSort string
+
+// ListItemsParamsTagMode defines parameters for ListItems.
+type ListItemsParamsTagMode string
+
+// ListItemsParamsSubjectMode defines parameters for ListItems.
+type ListItemsParamsSubjectMode string
+
+// GetItemFacetsParams defines parameters for GetItemFacets.
+type GetItemFacetsParams struct {
+	// Q Case-insensitive substring over title, tags and subject names.
+	//
+	// Not notes - the field a searcher most often means. Notes is not carried in the secondary index these projections read, and adding it means rebuilding the index. Not relevance ranking, stemming or typo tolerance either; at a few thousand items this finds what you meant far more often than it misses.
+	Q *FilterQ `form:"q,omitempty" json:"q,omitempty"`
+
+	// TypeId Repeatable or comma-separated. Several values are OR.
+	TypeId *FilterTypeId `form:"typeId,omitempty" json:"typeId,omitempty"`
+
+	// Tag Repeatable or comma-separated. Matched case-insensitively.
+	Tag *FilterTag `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// TagMode `any` (default) matches an item carrying any of the tags; `all` requires every one.
+	TagMode *GetItemFacetsParamsTagMode `form:"tagMode,omitempty" json:"tagMode,omitempty"`
+
+	// SubjectId Items tagged with this person or pet. This is how "photographs of Grandma" is asked - there is deliberately no `/subjects/{id}/items`, because a second list endpoint would mean a second pagination and filter surface to keep in step.
+	SubjectId   *FilterSubjectId                `form:"subjectId,omitempty" json:"subjectId,omitempty"`
+	SubjectMode *GetItemFacetsParamsSubjectMode `form:"subjectMode,omitempty" json:"subjectMode,omitempty"`
+
+	// SubjectKind Items tagged with at least one subject of this kind, e.g. `pet`.
+	SubjectKind *FilterSubjectKind `form:"subjectKind,omitempty" json:"subjectKind,omitempty"`
+	PlaceId     *FilterPlaceId     `form:"placeId,omitempty" json:"placeId,omitempty"`
+
+	// Has Media the item actually holds, not what its type permits - so `has=audio` means something you can really listen to, rather than every CD including the ones that are only photographs of a disc. Several values are AND.
+	Has *FilterHas `form:"has,omitempty" json:"has,omitempty"`
+
+	// From Partial ISO accepted. `1940` means the start of 1940.
+	From *FilterFrom `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Partial ISO accepted. `1950` means the **end** of 1950, not its first instant.
+	To *FilterTo `form:"to,omitempty" json:"to,omitempty"`
+
+	// DateOverlap Default true: an item whose date range intersects the window matches, so a photograph dated 1930-1960 is returned when asking for the 1940s - it genuinely might be the one you want, and strict containment would hide it. Set false to require the item's sort point to fall inside the window instead.
+	DateOverlap *FilterDateOverlap `form:"dateOverlap,omitempty" json:"dateOverlap,omitempty"`
+
+	// HasDate Undated items never satisfy a from/to window, so this is how you reach them - and how the timeline excludes them.
+	HasDate *FilterHasDate `form:"hasDate,omitempty" json:"hasDate,omitempty"`
+
+	// HasGeo Whether the item has coordinates, as opposed to only a place label.
+	HasGeo   *FilterHasGeo   `form:"hasGeo,omitempty" json:"hasGeo,omitempty"`
+	HasFiles *FilterHasFiles `form:"hasFiles,omitempty" json:"hasFiles,omitempty"`
+
+	// Bbox `minLon,minLat,maxLon,maxLat`. A box whose minLon exceeds its maxLon wraps the antimeridian rather than matching nothing, which is what a map panned past 180° sends. Items without coordinates never match.
+	Bbox *FilterBBox `form:"bbox,omitempty" json:"bbox,omitempty"`
+
+	// Facets Which fields to count. Repeatable or comma-separated. Defaults to type, tag, subject, capability and date:decade.
+	Facets *[]GetItemFacetsParamsFacets `form:"facets,omitempty" json:"facets,omitempty"`
+}
+
+// GetItemFacetsParamsTagMode defines parameters for GetItemFacets.
+type GetItemFacetsParamsTagMode string
+
+// GetItemFacetsParamsSubjectMode defines parameters for GetItemFacets.
+type GetItemFacetsParamsSubjectMode string
+
+// GetItemFacetsParamsFacets defines parameters for GetItemFacets.
+type GetItemFacetsParamsFacets string
+
+// GetItemIndexParams defines parameters for GetItemIndex.
+type GetItemIndexParams struct {
+	// Q Case-insensitive substring over title, tags and subject names.
+	//
+	// Not notes - the field a searcher most often means. Notes is not carried in the secondary index these projections read, and adding it means rebuilding the index. Not relevance ranking, stemming or typo tolerance either; at a few thousand items this finds what you meant far more often than it misses.
+	Q *FilterQ `form:"q,omitempty" json:"q,omitempty"`
+
+	// TypeId Repeatable or comma-separated. Several values are OR.
+	TypeId *FilterTypeId `form:"typeId,omitempty" json:"typeId,omitempty"`
+
+	// Tag Repeatable or comma-separated. Matched case-insensitively.
+	Tag *FilterTag `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// TagMode `any` (default) matches an item carrying any of the tags; `all` requires every one.
+	TagMode *GetItemIndexParamsTagMode `form:"tagMode,omitempty" json:"tagMode,omitempty"`
+
+	// SubjectId Items tagged with this person or pet. This is how "photographs of Grandma" is asked - there is deliberately no `/subjects/{id}/items`, because a second list endpoint would mean a second pagination and filter surface to keep in step.
+	SubjectId   *FilterSubjectId               `form:"subjectId,omitempty" json:"subjectId,omitempty"`
+	SubjectMode *GetItemIndexParamsSubjectMode `form:"subjectMode,omitempty" json:"subjectMode,omitempty"`
+
+	// SubjectKind Items tagged with at least one subject of this kind, e.g. `pet`.
+	SubjectKind *FilterSubjectKind `form:"subjectKind,omitempty" json:"subjectKind,omitempty"`
+	PlaceId     *FilterPlaceId     `form:"placeId,omitempty" json:"placeId,omitempty"`
+
+	// Has Media the item actually holds, not what its type permits - so `has=audio` means something you can really listen to, rather than every CD including the ones that are only photographs of a disc. Several values are AND.
+	Has *FilterHas `form:"has,omitempty" json:"has,omitempty"`
+
+	// From Partial ISO accepted. `1940` means the start of 1940.
+	From *FilterFrom `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Partial ISO accepted. `1950` means the **end** of 1950, not its first instant.
+	To *FilterTo `form:"to,omitempty" json:"to,omitempty"`
+
+	// DateOverlap Default true: an item whose date range intersects the window matches, so a photograph dated 1930-1960 is returned when asking for the 1940s - it genuinely might be the one you want, and strict containment would hide it. Set false to require the item's sort point to fall inside the window instead.
+	DateOverlap *FilterDateOverlap `form:"dateOverlap,omitempty" json:"dateOverlap,omitempty"`
+
+	// HasDate Undated items never satisfy a from/to window, so this is how you reach them - and how the timeline excludes them.
+	HasDate *FilterHasDate `form:"hasDate,omitempty" json:"hasDate,omitempty"`
+
+	// HasGeo Whether the item has coordinates, as opposed to only a place label.
+	HasGeo   *FilterHasGeo   `form:"hasGeo,omitempty" json:"hasGeo,omitempty"`
+	HasFiles *FilterHasFiles `form:"hasFiles,omitempty" json:"hasFiles,omitempty"`
+
+	// Bbox `minLon,minLat,maxLon,maxLat`. A box whose minLon exceeds its maxLon wraps the antimeridian rather than matching nothing, which is what a map panned past 180° sends. Items without coordinates never match.
+	Bbox *FilterBBox             `form:"bbox,omitempty" json:"bbox,omitempty"`
+	Sort *GetItemIndexParamsSort `form:"sort,omitempty" json:"sort,omitempty"`
+
+	// Covers Attach a presigned cover URL to each card.
+	Covers *bool `form:"covers,omitempty" json:"covers,omitempty"`
+}
+
+// GetItemIndexParamsTagMode defines parameters for GetItemIndex.
+type GetItemIndexParamsTagMode string
+
+// GetItemIndexParamsSubjectMode defines parameters for GetItemIndex.
+type GetItemIndexParamsSubjectMode string
+
+// GetItemIndexParamsSort defines parameters for GetItemIndex.
+type GetItemIndexParamsSort string
 
 // DeleteItemParams defines parameters for DeleteItem.
 type DeleteItemParams struct {
@@ -560,6 +1081,33 @@ type PutMemberJSONBody struct {
 	Role        Role    `json:"role"`
 }
 
+// ListSubjectsParams defines parameters for ListSubjects.
+type ListSubjectsParams struct {
+	// Kind Narrow to one kind, e.g. `person` or `pet`.
+	Kind *string `form:"kind,omitempty" json:"kind,omitempty"`
+}
+
+// DeleteSubjectParams defines parameters for DeleteSubject.
+type DeleteSubjectParams struct {
+	// IfMatch The `ETag` last seen. If the record has changed since, the write is refused with `412` rather than overwriting someone else's edit.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+}
+
+// PatchSubjectParams defines parameters for PatchSubject.
+type PatchSubjectParams struct {
+	// IfMatch The `ETag` last seen. If the record has changed since, the write is refused with `412` rather than overwriting someone else's edit.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+}
+
+// GetSubjectTreeParams defines parameters for GetSubjectTree.
+type GetSubjectTreeParams struct {
+	Depth     *int                           `form:"depth,omitempty" json:"depth,omitempty"`
+	Direction *GetSubjectTreeParamsDirection `form:"direction,omitempty" json:"direction,omitempty"`
+}
+
+// GetSubjectTreeParamsDirection defines parameters for GetSubjectTree.
+type GetSubjectTreeParamsDirection string
+
 // GetMeParams defines parameters for GetMe.
 type GetMeParams struct {
 	DisplayName *string `form:"displayName,omitempty" json:"displayName,omitempty"`
@@ -585,3 +1133,12 @@ type CreateUploadUrlJSONRequestBody CreateUploadUrlJSONBody
 
 // PutMemberJSONRequestBody defines body for PutMember for application/json ContentType.
 type PutMemberJSONRequestBody PutMemberJSONBody
+
+// PutRelationshipJSONRequestBody defines body for PutRelationship for application/json ContentType.
+type PutRelationshipJSONRequestBody = RelationshipCreate
+
+// CreateSubjectJSONRequestBody defines body for CreateSubject for application/json ContentType.
+type CreateSubjectJSONRequestBody = SubjectCreate
+
+// PatchSubjectJSONRequestBody defines body for PatchSubject for application/json ContentType.
+type PatchSubjectJSONRequestBody = SubjectPatch

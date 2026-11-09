@@ -1,0 +1,29 @@
+meta {
+  name: list people
+  type: http
+  seq: 6
+}
+
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken:
+  service: lambda
+  region: {{awsRegion}}
+  profileName:
+}
+
+get {
+  url: {{baseUrl}}/v1/archives/{{archiveId}}/subjects?kind=person
+  body: none
+  auth: awsv4
+}
+
+tests {
+  test("narrows to one kind", function () {
+    expect(res.getStatus()).to.equal(200);
+    res.body.data.forEach(function (s) {
+      expect(s.kind).to.equal("person");
+    });
+  });
+}

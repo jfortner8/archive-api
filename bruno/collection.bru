@@ -1,0 +1,71 @@
+auth {
+  mode: awsv4
+}
+
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken: 
+  service: lambda
+  region: {{awsRegion}}
+  profileName: 
+}
+
+headers {
+  X-API-Key: {{apiKey}}
+  X-User-Token: {{userToken}}
+}
+
+docs {
+  # archive-api
+
+  Requests run top to bottom as a flow: each one stores the ids the next needs
+  as runtime variables, so nothing has to be pasted between them. Use the
+  collection runner, or run folders in order.
+
+  ## Auth
+
+  Three independent layers, and every request needs all three - including
+  `/healthz`, which needs none of the application's own checks but still sits
+  behind the Function URL's IAM gate.
+
+  1. **AWS SigV4**, set on this collection. Production's Function URL is
+     `AWS_IAM`, so an unsigned request is rejected by AWS before any of this
+     API's code runs - you get a bare `Forbidden` with no JSON body, which is
+     how you tell it apart from this API's own errors.
+  2. **`X-API-Key`**, checked in Go.
+  3. **`X-User-Token`**, a Cognito access token. Deliberately not
+     `Authorization`, because SigV4 signing owns that header.
+
+  Locally there is no IAM gate, so the signature is ignored - but Bruno still
+  needs the variables to exist, which is why the local environment sets
+  throwaway values rather than leaving them blank.
+
+  ## Before the first run
+
+  Pick an environment, then for local:
+
+  ```
+  make dev-up && make dev-setup && make run
+  ```
+
+  `apiKey` matches `API_KEY` in your `.env` (`dev-key` by default).
+
+  `userToken` is a Cognito access token, and it is the one thing this API
+  cannot give you - it only verifies tokens. See
+  `docs/getting-an-access-token.md`; the short version is to copy
+  `archive_access_token` out of the UI's cookies, or run `make token`.
+
+  Tokens last 12 hours. A run of `401`s that starts suddenly usually means
+  yours expired.
+
+  ## Production
+
+  Copy the four values out of `archives-ui/.env.local`, which already holds
+  working credentials for the IAM user allowed to invoke the function:
+  `ARCHIVE_API_URL`, `ARCHIVE_API_KEY`, `ARCHIVE_API_ACCESS_KEY_ID`,
+  `ARCHIVE_API_SECRET_ACCESS_KEY`.
+
+  Alternatively leave the key variables empty and set `awsProfile` to an AWS
+  CLI profile name, and Bruno will use that profile's credentials instead.
+}

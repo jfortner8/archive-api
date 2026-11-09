@@ -1,0 +1,41 @@
+meta {
+  name: item types
+  type: http
+  seq: 2
+}
+
+auth:awsv4 {
+  accessKeyId: {{awsAccessKeyId}}
+  secretAccessKey: {{awsSecretAccessKey}}
+  sessionToken:
+  service: lambda
+  region: {{awsRegion}}
+  profileName:
+}
+
+get {
+  url: {{baseUrl}}/v1/item-types
+  body: none
+  auth: awsv4
+}
+
+tests {
+  test("serves the catalogue", function () {
+    expect(res.getStatus()).to.equal(200);
+    const ids = res.body.data.map(t => t.id);
+    expect(ids).to.include.members(["photo", "photo-two-sided", "document", "cd", "stack"]);
+  });
+
+  test("every CD slot is optional", function () {
+    const cd = res.body.data.find(t => t.id === "cd");
+    cd.slots.forEach(function (slot) {
+      expect(slot.min, slot.id).to.equal(0);
+    });
+  });
+}
+
+docs {
+  What the UI builds its forms and viewers from, instead of hard-coding a
+  type list. Adding a datatype is a manifest entry, so this response is the
+  only place a client needs to look.
+}
