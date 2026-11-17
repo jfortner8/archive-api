@@ -60,6 +60,8 @@ func TestExtensionFor(t *testing.T) {
 		{contentType: "application/pdf; version=1.7", want: ".pdf"},
 		{contentType: "IMAGE/PNG", want: ".png"},
 		{contentType: "audio/mp4", want: ".m4a"},
+		{contentType: "audio/ogg", want: ".ogg"},
+		{contentType: "audio/webm;codecs=opus", want: ".webm"},
 		// The extension is cosmetic, so something unrecognised simply gets
 		// none rather than failing an upload.
 		{contentType: "application/x-nonsense", want: ""},
