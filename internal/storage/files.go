@@ -78,6 +78,12 @@ func ExtensionFor(contentType string) string {
 		return ".m4a"
 	case "audio/wav", "audio/x-wav":
 		return ".wav"
+	case "audio/ogg", "audio/opus":
+		// WhatsApp voice notes are Ogg/Opus.
+		return ".ogg"
+	case "audio/webm":
+		// What Chrome's MediaRecorder produces for an in-browser recording.
+		return ".webm"
 	case "video/mp4":
 		return ".mp4"
 	case "video/quicktime":
