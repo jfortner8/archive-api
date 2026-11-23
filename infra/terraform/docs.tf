@@ -109,60 +109,6 @@ resource "aws_s3_bucket_policy" "docs" {
   depends_on = [aws_s3_bucket_public_access_block.docs]
 }
 
-# The role CI assumes to publish the page, with no stored key. Unlike the
-# read-only plan role in ci.tf this one can write, so it is trusted only for
-# runs on main - never for pull requests, which anyone able to open one could
-# otherwise use to overwrite the live page.
-data "aws_iam_policy_document" "github_docs_assume" {
-  statement {
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-
-    principals {
-      type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "token.actions.githubusercontent.com:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "token.actions.githubusercontent.com:sub"
-      values   = ["${var.github_repo_subjects["archive-api"]}:ref:refs/heads/main"]
-    }
-  }
-}
-
-resource "aws_iam_role" "github_docs" {
-  name                 = "${var.lambda_function_name}-ci-docs"
-  description          = "Publishes the API reference page to the docs bucket, from main only."
-  assume_role_policy   = data.aws_iam_policy_document.github_docs_assume.json
-  max_session_duration = 3600
-}
-
-# One object and one invalidation, nothing else. The page is a single file, so
-# the role is allowed to write exactly that key.
-data "aws_iam_policy_document" "github_docs_publish" {
-  statement {
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.docs.arn}/index.html"]
-  }
-
-  statement {
-    actions   = ["cloudfront:CreateInvalidation"]
-    resources = [aws_cloudfront_distribution.docs.arn]
-  }
-}
-
-resource "aws_iam_role_policy" "github_docs_publish" {
-  name   = "publish-docs"
-  role   = aws_iam_role.github_docs.id
-  policy = data.aws_iam_policy_document.github_docs_publish.json
-}
-
 output "docs_url" {
   description = "Where the API reference is served. Linked from both READMEs."
   value       = "https://${aws_cloudfront_distribution.docs.domain_name}"
@@ -176,9 +122,4 @@ output "docs_bucket_name" {
 output "docs_distribution_id" {
   description = "Set as AWS_DOCS_DISTRIBUTION_ID in the repository's Actions variables."
   value       = aws_cloudfront_distribution.docs.id
-}
-
-output "docs_publish_role_arn" {
-  description = "Set as AWS_DOCS_ROLE_ARN in the repository's Actions variables."
-  value       = aws_iam_role.github_docs.arn
 }

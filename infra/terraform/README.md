@@ -37,48 +37,21 @@ Plans and applies run in CI, not on anyone's machine.
   *before* the code deploy, so the table or permission a change needs exists
   before the code that uses it ships.
 
-CI authenticates with GitHub OIDC rather than a stored key. There are two
-general runner roles, shared by every repository that uses this account:
-
-- `github-actions-runner-read` plans and inspects, for pull requests and main.
-- `github-actions-runner-apply` changes infrastructure, for main only.
-
-They are split because a pull request runs the workflow from its own branch: a
-role that could write and was trusted for pull requests would let anyone able
-to push a branch rewrite the workflow and apply unreviewed.
-
-Which repositories may use each is a list in `variables.tf`
-(`github_runner_read_repos`, `github_runner_apply_repos`), so onboarding another
-repository is one line. Two narrower identities sit beside them:
-`archive-api-ci-docs` can publish one file, and the separate
+CI authenticates with GitHub OIDC rather than a stored key, as one role shared
+by every repository that uses this account: `github-actions-runner`, with
+AdministratorAccess, for plans and applies alike. It is trusted for pull
+requests and `main` in the repositories listed in `variables.tf`
+(`github_runner_repos`), so onboarding another repository is one line, and
+whoever can push a branch to one of them can change the account. The separate
 `archive-api-ci-deploy` user can only update Lambda code.
+
+The role's ARN is in each repository's `AWS_*_ROLE_ARN` Actions variables. It
+can change anything, including itself, so `ci.tf` is applied by CI like every
+other file.
 
 The apply job refuses to run if a plan deletes or replaces anything, because
 the table and the media bucket cannot be recovered. A change that genuinely
 needs that is applied by hand, deliberately.
-
-### The one manual apply
-
-CI cannot create the role that gives CI permission to apply, so that role is
-created by hand, once. Everything after it is automatic.
-
-```bash
-terraform -chdir=infra/terraform plan -out=tfplan
-terraform -chdir=infra/terraform apply tfplan
-terraform -chdir=infra/terraform output -raw apply_role_arn
-```
-
-Set that ARN as the `AWS_APPLY_ROLE_ARN` repository **variable** (Settings →
-Secrets and variables → Actions → Variables), and the read role's ARN
-(`runner_read_role_arn`) as `AWS_PLAN_ROLE_ARN`. Until the apply variable
-exists the `apply` job skips itself and deploys continue as before.
-
-### Edits to `apply.tf` are always manual
-
-The apply role is denied permission to change itself, so a change to its own
-policy fails in CI by design and is applied by hand, the same way as the first
-one. A role that could rewrite its own permissions would have none worth
-speaking of.
 
 ## First run
 
