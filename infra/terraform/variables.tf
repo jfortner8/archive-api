@@ -123,31 +123,27 @@ variable "github_repo_subjects" {
     and use its `sub_claim_prefix`.
 
     Listing a repository here does not by itself grant anything; it must also
-    appear in one of the two lists below.
+    appear in github_runner_repos below.
   EOT
   type        = map(string)
   default = {
-    "archive-api"   = "repo:jfortner8@160181019/archive-api@1368928181"
-    "archives-ui"   = "repo:jfortner8@160181019/archives-ui@1368556526"
-    "alecita-y-yon" = "repo:jfortner8@160181019/alecita-y-yon@1411948881"
+    "archive-api"      = "repo:jfortner8@160181019/archive-api@1368928181"
+    "archives-ui"      = "repo:jfortner8@160181019/archives-ui@1368556526"
+    "alecita-y-yon"    = "repo:jfortner8@160181019/alecita-y-yon@1411948881"
+    "exercise-tracker" = "repo:jfortner8@160181019/exercise-tracker@1460270457"
+    # Uses GitHub's default (name-based) subject format.
+    "LocalLocatorAPI" = "repo:jfortner8/LocalLocatorAPI"
   }
 }
 
-variable "github_runner_read_repos" {
-  description = "Repositories whose pull requests and main branch may assume github-actions-runner-read."
-  type        = list(string)
-  default     = ["archive-api", "archives-ui", "alecita-y-yon"]
-}
-
-variable "github_runner_apply_repos" {
+variable "github_runner_repos" {
   description = <<-EOT
-    Repositories whose main branch may assume github-actions-runner-apply, which
-    can change infrastructure. Keep this to the repositories that actually own
-    Terraform: every entry is a place where a compromised main branch becomes
-    write access to the account.
+    Repositories whose pull requests and main branch may assume
+    github-actions-runner, which has AdministratorAccess. Every entry is a place
+    where pushing a branch becomes admin on the account: list only your own.
   EOT
   type        = list(string)
-  default     = ["archive-api"]
+  default     = ["archive-api", "archives-ui", "alecita-y-yon", "exercise-tracker", "LocalLocatorAPI"]
 }
 
 variable "derive_memory_mb" {
